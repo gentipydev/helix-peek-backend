@@ -335,7 +335,6 @@ From the repository root, in order.
    ```sh
    python3 -m venv .modal-venv && .modal-venv/bin/pip install -r pipeline/resolver/requirements.txt
    .modal-venv/bin/modal token new          # once, in a browser
-   .venv/bin/python -I pipeline/locus/snapshot.py   # the locus inputs, once
    .modal-venv/bin/modal deploy pipeline/resolver/modal_app.py
    ```
 
@@ -557,10 +556,9 @@ the Mac's worker makes, so a protein is built with the Mac off.
   it (`worker.make_locus`), from the pinned snapshot of the locus bake's
   inputs (`pipeline/locus/inputs.py`), which its image carries
   (`modal_app.LOCUS_INPUTS`). The snapshot is data, which the code's upload
-  leaves behind, so it goes up on its own, and a deploy needs it built first
-  on the deploying machine (`.venv/bin/python -I pipeline/locus/snapshot.py`,
-  which says whether what it built is the pinned one). Without it the deploy
-  stops and names the file. Its digest is checked as a sweep loads it; a
+  leaves behind, so it goes up on its own, from `pipeline/locus/pinned/`,
+  where git keeps it since 2026-11-14: any checkout deploys with no step
+  first. Without it the deploy stops and names the file. Its digest is checked as a sweep loads it; a
   sweep that cannot read it resolves the protein all the same, its locus
   `absent`, which `scripts/queue_locus.py` makes afterwards. The load takes
   the sweep's process to about 164 MB, so it asks for 512 MiB
@@ -576,11 +574,11 @@ the Mac's worker makes, so a protein is built with the Mac off.
    A10 ($1.10) (`modal_app.SCORER_GPU`, in that order). The fold and the
    evidence run on CPUs, cents a month.
 2. The secret's five keys, step 2 of "Deploying, once".
-3. The locus inputs' snapshot, once on the deploying machine:
-   `.venv/bin/python -I pipeline/locus/snapshot.py`.
-4. `.modal-venv/bin/modal deploy pipeline/resolver/modal_app.py`
-5. Optionally the wake, step 4 of "Deploying, once", and `RESOLVES_PER_DAY`.
-6. The Mac's worker may stay beside it, or go: `scripts/resolver_worker.sh uninstall`.
+3. `.modal-venv/bin/modal deploy pipeline/resolver/modal_app.py`, from a
+   checkout that has the locus inputs' snapshot (git keeps it, in
+   `pipeline/locus/pinned/`, since 2026-11-14).
+4. Optionally the wake, step 4 of "Deploying, once", and `RESOLVES_PER_DAY`.
+5. The Mac's worker may stay beside it, or go: `scripts/resolver_worker.sh uninstall`.
 
 The two may run at once: every claim is `FOR UPDATE SKIP LOCKED`, so they never
 take the same request or the same bake, and either may make any part of a
@@ -682,7 +680,7 @@ again:
   pinned snapshot, so each is made at once (`worker.make_locus`) and written
   in a transaction of its own, ready or refused.
 - Only a protein built on demand is touched (`catalog_order` null).
-- It needs the snapshot on this machine (`pipeline/locus/snapshot.py`).
+- It reads the snapshot git keeps (`pipeline/locus/pinned/`).
 - On 2026-11-13 it gave B2M and PFN1 theirs.
 - `check_built.py` holds a protein's locus to the bytes the snapshot makes
   from its index row today, and calls an absent one wrong.

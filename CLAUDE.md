@@ -200,10 +200,10 @@ runs, these things follow for anyone working in this checkout:
   AVI refused refuses ClinVar too: its records are placed by AVI's map. `RESOLVER_EVIDENCE=0`
   turns it off; `scripts/queue_evidence.py` queues it for a protein built without it.
 - And each protein's locus, as it resolves it, written with its record. The snapshot is read
-  beside the code (`pipeline/data/locus_inputs/`, by `inputs.py`'s own path, never the worker's
-  data directory), and Modal's sweep carries it in its image: build it before a deploy
-  (`pipeline/locus/snapshot.py`). Where it cannot be read, the locus is left absent and the
-  build goes on. `scripts/queue_locus.py` makes it at once for a protein built before
+  beside the code (`pipeline/locus/pinned/`, by `inputs.py`'s own path, never the worker's
+  data directory), where git keeps it since 2026-11-14 with the notice of its sources' terms,
+  and Modal's sweep carries it in its image. Where it cannot be read, the locus is left absent
+  and the build goes on. `scripts/queue_locus.py` makes it at once for a protein built before
   (2026-11-13: B2M and PFN1).
 
 ## The peptide model's recorded run

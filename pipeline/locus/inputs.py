@@ -23,13 +23,15 @@ It is gzipped text: a header line of JSON, then one line per Atlas gene,
 `["ENSG…",{…}]`, in Ensembl order, of which only the genes asked for are
 ever parsed. Its name carries the first twelve hex digits of the sha256 of
 its text, and `INPUTS_SHA256` pins the whole text: `load` refuses any other
-file. It lives under `pipeline/data/`, which git ignores; the digest here is
-what makes it reproducible, since `snapshot.py` builds the same text from the
-same sources on the same date (`INPUTS_CREATED`).
+file. It is kept in git beside this digest, in `pinned/` (since 2026-11-14;
+until then it was git-ignored under `pipeline/data/locus_inputs/`), with a
+`NOTICE.md` naming its sources and their terms. `snapshot.py` builds the same
+text from the same sources on the same date (`INPUTS_CREATED`), for as long as
+UCSC's tables, which carry no version, stand as they were.
 
 Where it is: `HELIXPEEK_LOCUS_INPUTS` (the file, or the folder it is in), else
-`pipeline/data/locus_inputs/` beside this code, never `paths.DATA`, which a
-worker points at a directory of its own.
+`pinned/` beside this code, never `paths.DATA`, which a worker points at a
+directory of its own.
 """
 
 from __future__ import annotations
@@ -49,7 +51,7 @@ INPUTS_SHA256 = "bb475d41dcf93379c8c1af63026bef9af35495abbb658e4416d7c7d05c9ed4b
 INPUTS_CREATED = "2026-11-13"
 
 ENV = "HELIXPEEK_LOCUS_INPUTS"
-FOLDER = Path(__file__).resolve().parents[1] / "data" / "locus_inputs"
+FOLDER = Path(__file__).resolve().parent / "pinned"
 
 KIND = "helixpeek-locus-inputs"
 FORMAT = 1
@@ -159,8 +161,8 @@ def read(path: Path, expected: str | None = INPUTS_SHA256) -> Inputs:
     """The snapshot at [path], held to [expected] (None takes any)."""
     if not path.is_file():
         raise InputsUnavailable(
-            f"no locus inputs snapshot at {path}: build it with "
-            f"`python pipeline/locus/snapshot.py` (it is not in git)")
+            f"no locus inputs snapshot at {path}: it is in git, in "
+            f"pipeline/locus/pinned/, or build it with `python pipeline/locus/snapshot.py`")
     digest = hashlib.sha256()
     header = None
     genes: dict[str, bytes] = {}

@@ -14,7 +14,7 @@ This is a separate track kind, `locus`. Nothing is added to `targets.py`,
 and no other track is touched.
 
 ```sh
-.venv/bin/python -I pipeline/locus/snapshot.py               # the pinned inputs, once per machine
+.venv/bin/python -I pipeline/locus/snapshot.py --out /tmp/x # rebuild the pinned inputs, to check them
 .venv/Scripts/python pipeline/locus/bake_locus.py --all      # writes pipeline/data/assets/locus/
 .venv/Scripts/python pipeline/locus/check_locus.py           # every check below; exits 1 on any failure
 .venv/bin/python -I pipeline/locus/verify_locus.py           # each place held to NCBI Gene's (network)
@@ -39,10 +39,15 @@ Every source but UniProt is read from one pinned snapshot, never fetched at
 bake time: `snapshot.py` downloads the Atlas 25.1 (from its own archive site,
 `v25.proteinatlas.org`), UCSC's tables, MANE v1.5's summary, HGNC's monthly
 archive of 2026-10-06 and NCBI's GRCh38.p14 scaffold placements, and writes
-`pipeline/data/locus_inputs/locus-inputs.<sha12>.jsonl.gz` (git ignores it).
-`inputs.py` pins the sha256 of its text, `INPUTS_SHA256`, and refuses any
-other file; the same sources on the same date (`INPUTS_CREATED`) give the
-same text, so a machine without it builds it again. The Atlas's site serves
+`pipeline/locus/pinned/locus-inputs.<sha12>.jsonl.gz`. `inputs.py` pins the
+sha256 of its text, `INPUTS_SHA256`, and refuses any other file. The pinned
+one is kept in git beside that digest since 2026-11-14, with `NOTICE.md`
+naming each source and its terms (the Atlas's CC BY 4.0 among them), so any
+checkout bakes, runs the census and deploys with no step first; until then
+it was git-ignored, on one Mac and in Modal's image. The same sources on the
+same date (`INPUTS_CREATED`) give the same text (byte-identical on 2026-11-13
+and 2026-11-14), but UCSC's tables carry no version, so once one changes no
+rebuild gives it again and the copy in git is the only one. The Atlas's site serves
 its newest release, and a bake that read it gene by gene would have moved a
 curated zoom to 26.0 unasked. Built 2026-11-13: `bb475d41dcf9`, 20,162 Atlas
 genes, 42 MB of text, 9.4 MB on disk. It reproduces every curated protein's

@@ -5,8 +5,10 @@
 
 Downloads every source from a pinned URL into a directory of its own
 (`--work`, else a new temporary one, removed after), reads them, and writes
-`pipeline/data/locus_inputs/locus-inputs.<sha12>.jsonl.gz` (`--out`), where
-the bake, the census and the resolver read it (`inputs.py`). It prints the
+`pipeline/locus/pinned/locus-inputs.<sha12>.jsonl.gz` (`--out`), where the
+bake, the census and the resolver read it (`inputs.py`), and where the pinned
+one is kept in git. Give `--out` a folder of its own to check a rebuild
+against it without touching it. It prints the
 sha256 of the snapshot's text and says whether it is the one `inputs.py`
 pins. Nothing is uploaded.
 

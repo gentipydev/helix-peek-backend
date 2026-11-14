@@ -2,8 +2,8 @@
 
 A snapshot is built here from the locus fixtures, made small
 (`testing.py`). Nothing fetches.
-One test reads the real pinned snapshot, and skips where it has not been built
-(`snapshot.py`), as the tests that need stored tracks skip until
+One test reads the real pinned snapshot, kept in git in `pinned/` since
+2026-11-14, against the stored curated tracks, and skips until
 `fetch_tracks.py` has filled `pipeline/data/`.
 """
 
@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import gzip
 import json
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -154,10 +156,20 @@ def test_the_pinned_snapshot_gives_every_stored_curated_reading():
         assert bake_locus.expression_of(pinned.atlas_gene(ensembl)) == expression, path.name
 
 
-def test_the_snapshot_folder_is_ignored_by_git():
-    ignore = (BACKEND / ".gitignore").read_text(encoding="utf-8").splitlines()
-    assert "pipeline/data/" in ignore
-    assert inputs.FOLDER.is_relative_to(BACKEND / "pipeline" / "data")
+def test_the_pinned_snapshot_is_kept_in_git_beside_its_digest():
+    """Any checkout can bake a locus, run the census and deploy the resolver:
+    the snapshot `INPUTS_SHA256` pins is in `pinned/`, which git keeps, with
+    the notice of its sources' terms (the decision of 2026-11-14)."""
+    assert inputs.FOLDER == BACKEND / "pipeline" / "locus" / "pinned"
+    pinned = inputs.FOLDER / inputs.file_name(inputs.INPUTS_SHA256)
+    assert pinned.is_file()
+    assert (inputs.FOLDER / "NOTICE.md").is_file()
+    assert not inputs.FOLDER.is_relative_to(BACKEND / "pipeline" / "data")
+    git = shutil.which("git")
+    if git is None or not (BACKEND / ".git").exists():
+        pytest.skip("not a git checkout")
+    ignored = subprocess.run([git, "check-ignore", "-q", str(pinned)], cwd=BACKEND)
+    assert ignored.returncode == 1, "git ignores the pinned snapshot"
 
 
 def test_the_bake_fetches_nothing_but_uniprot():

@@ -383,8 +383,9 @@ move zooms to 26.0 unasked.
 
 Measured on 2026-11-13 by the planning census, over the 7,311 proteins then
 offered, with rule v2 on both releases (`path_of_v2`; rule v3 came after).
-Its per-protein results are `handoff-zoom-for-built/results/analysis.jsonl`
-in the workspace, outside this repository, recounted on 2026-11-14.
+The counts were recounted from its per-protein results on 2026-11-14; that
+file was not kept. A move measures again from a 26.0 snapshot and the census
+(below), with the rule then current.
 
 | | Proteins |
 |---|---|

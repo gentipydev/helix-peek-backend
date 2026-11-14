@@ -6,13 +6,16 @@
 `DATABASE_URL` comes from `.env`, as it does for the service. Run it again
 whenever UniProt (every eight weeks) or MANE publishes a release.
 
-It downloads three things, none of them large:
+It downloads four things, none of them large:
 
 - every reviewed human UniProt entry, as JSON, so names arrive structured and
   nothing here parses a name out of a string of parentheses, with the PDB
-  entries UniProt maps to it;
+  entries UniProt maps to it, its sequence, and the features that make its
+  mature chains and its domains (`pipeline.structure.offer`);
 - MANE's summary for the current release: the transcript, protein, gene and
   GRCh38 span for each MANE Select gene;
+- MANE's genomic GFF for the same release: each MANE Select transcript's
+  exons, for the gene page's rule below;
 - NCBI's LRG_RefSeqGene table: which RefSeqGene record each RefSeq protein is
   annotated on.
 
@@ -24,7 +27,19 @@ Since 2026-11-13 a buildable protein is offered to be built only where it is
 expected to build whole, with its fold from the PDB (`protein_index.withhold`,
 `offer_refusal`): a PDB entry placing 30 or more of its residues by a method
 and resolution the PDB rule accepts, UniProt's evidence at protein level and
-an annotation score of 5, and 50 to 7,900 residues. Every other is written
+an annotation score of 5, and 50 to 7,900 residues. Since 2026-11-14 a
+protein whose MANE Select exons alone are over the gene page, which the record
+builder refuses ("Its exons alone are 30,609 bp; the gene page holds 24,000."),
+is withheld too: the builder's own test run on MANE's exons
+(`pipeline.mane.exons_over_page`); on 2026-11-14 that was GRIN2B, LRRC7,
+RPS6KA5, SMAD2 and ZBTB20, the census's only refusals. So is one none of
+whose PDB entries could pass the fold rule's coverage: no chain of an entry
+UniProt maps to it places 70% of a mature chain, or 90% of a domain of 30 or
+more residues, UniProt's or Pfam's (`pipeline.structure.offer`; Pfam's from
+InterPro, asked only where UniProt's own domains leave it uncovered, and a
+protein whose Pfam domains cannot be read is left offered). On a sample of
+400 offered proteins that named 34 of the 92 whose fold fell back to
+AlphaFold DB's model, and none that drew a PDB entry. Every other is written
 unbuildable, with the sentence the search shows. A listed protein's gene is
 never withheld, and a protein built already opens whatever its row says.
 `--every-buildable` writes the index as before, offering every buildable
@@ -56,6 +71,7 @@ from app.config import settings  # noqa: E402
 from app.protein_index import (  # noqa: E402
     curated_terms,
     genes_of,
+    offer_refusal,
     parse_refseqgene,
     pdb_reach,
     rows_for_entry,
@@ -63,13 +79,17 @@ from app.protein_index import (  # noqa: E402
     versionless,
     withhold,
 )
-from pipeline.mane import current_summary  # noqa: E402
+from pipeline.mane import current_gff, current_summary, exons_over_page  # noqa: E402
+from pipeline.structure import offer  # noqa: E402
+from pipeline.targets import GENE_PAGE_BUDGET_BP  # noqa: E402
 
 UNIPROT = (
     "https://rest.uniprot.org/uniprotkb/stream?compressed=true&format=json"
     "&query=%28organism_id%3A9606%29%20AND%20%28reviewed%3Atrue%29"
     "&fields=accession,gene_names,protein_name,length,annotation_score,"
-    "protein_existence,xref_mane-select,xref_hgnc,xref_geneid,xref_pdb"
+    "protein_existence,xref_mane-select,xref_hgnc,xref_geneid,xref_pdb,sequence,"
+    "ft_init_met,ft_signal,ft_transit,ft_propep,ft_chain,ft_peptide,ft_domain,ft_repeat,"
+    "ft_zn_fing"
 )
 REFSEQGENE = "https://ftp.ncbi.nlm.nih.gov/refseq/H_sapiens/RefSeqGene/LRG_RefSeqGene"
 
@@ -96,8 +116,10 @@ def _get(url: str) -> Tuple[bytes, Dict[str, str]]:
         return response.read(), {k.lower(): v for k, v in response.headers.items()}
 
 
-def download() -> Tuple[List[dict], str, Dict[str, dict], str, Dict[str, str]]:
-    """UniProt entries and release, MANE rows and release, RefSeqGene map."""
+def download() -> Tuple[List[dict], str, Dict[str, dict], str, Dict[str, str],
+                        Dict[str, dict]]:
+    """UniProt entries and release, MANE rows and release, RefSeqGene map, and
+    MANE's transcripts from its genomic GFF."""
     started = time.time()
     body, headers = _get(UNIPROT)
     entries = json.loads(gzip.decompress(body))["results"]
@@ -107,11 +129,13 @@ def download() -> Tuple[List[dict], str, Dict[str, dict], str, Dict[str, str]]:
 
     mane, mane_release = current_summary(_get)
     print("MANE {}: {:,} MANE Select transcripts".format(mane_release, len(mane)))
+    gff = current_gff(_get, mane_release)
+    print("MANE {} genomic GFF: {:,} transcripts".format(mane_release, len(gff)))
 
     body, _ = _get(REFSEQGENE)
     refseqgene = parse_refseqgene(io.StringIO(body.decode()))
     print("LRG_RefSeqGene: {:,} proteins on a RefSeqGene record".format(len(refseqgene)))
-    return entries, uniprot_release, mane, mane_release, refseqgene
+    return entries, uniprot_release, mane, mane_release, refseqgene, gff
 
 
 def build(entries, mane, mane_release, refseqgene):
@@ -282,7 +306,7 @@ def main() -> int:
     if not settings.database_url:
         raise SystemExit("DATABASE_URL is not set; the catalog check needs it.")
 
-    entries, uniprot_release, mane, mane_release, refseqgene = download()
+    entries, uniprot_release, mane, mane_release, refseqgene, gff = download()
     rows, terms, duplicates, _ = build(entries, mane, mane_release, refseqgene)
 
     with psycopg.connect(settings.database_url, prepare_threshold=None) as conn:
@@ -291,9 +315,26 @@ def main() -> int:
         if not arguments.every_buildable:
             # After the listed proteins are checked, which need their rows
             # buildable, and never on their genes.
-            withheld = withhold(rows, {entry["primaryAccession"]: pdb_reach(entry)
-                                       for entry in entries},
-                                {gene for (_slug, gene, *_rest) in catalog})
+            pages = exons_over_page(gff, GENE_PAGE_BUDGET_BP)
+            print("{:,} MANE Select transcripts' exons alone are over the gene page's "
+                  "{:,} bases.".format(len(pages), GENE_PAGE_BUDGET_BP))
+            reach = {entry["primaryAccession"]: pdb_reach(entry) for entry in entries}
+            listed = {gene for (_slug, gene, *_rest) in catalog}
+            # The fold rule's coverage, judged only for what every other rule
+            # offers: Pfam is asked about those alone.
+            by_accession = {entry["primaryAccession"]: entry for entry in entries}
+            offered = sorted({row["uniprot"] for row in rows
+                              if row["buildable"] and row["gene"] not in listed
+                              and offer_refusal(row, reach.get(row["uniprot"], 0),
+                                                pages.get(row["refseq_nuc"] or "")) is None})
+            started = time.time()
+            uncovered, unread = offer.uncovered([by_accession[a] for a in offered])
+            print("{:,} of the {:,} otherwise offered have no PDB entry that could pass the "
+                  "fold rule's coverage ({:.0f} s); {:,} whose Pfam domains could not be "
+                  "read are left offered{}.".format(
+                      len(uncovered), len(offered), time.time() - started, len(unread),
+                      ": " + ", ".join(unread[:20]) if unread else ""))
+            withheld = withhold(rows, reach, listed, pages, uncovered)
             print("{:,} buildable proteins withheld: not expected to build whole "
                   "(--every-buildable offers them).".format(withheld))
         text = report(rows, terms, duplicates, failures, notes,

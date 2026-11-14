@@ -28,7 +28,6 @@ from __future__ import annotations
 import argparse
 import collections
 import json
-import re
 import sys
 from pathlib import Path
 
@@ -40,6 +39,7 @@ if str(BACKEND) not in sys.path:
 from pipeline.locus import bake_locus, check_locus, verify_locus  # noqa: E402
 from pipeline.locus import inputs as locus_inputs  # noqa: E402
 from pipeline.locus.tissues import pair_tissue as tissue_of_pair  # noqa: E402
+from pipeline.mane import read_gff  # noqa: E402
 from pipeline.resolver.resolve import IndexRow, Refused, slug_for, source_for  # noqa: E402
 from pipeline.targets import Target  # noqa: E402
 
@@ -86,45 +86,6 @@ def save_dump(folder: Path, rows: list, release: dict, proteins: list) -> None:
 
 MANE_GFF = ("https://ftp.ncbi.nlm.nih.gov/refseq/MANE/MANE_human/release_1.5/"
             "MANE.GRCh38.v1.5.refseq_genomic.gff.gz")
-
-# A RefSeq transcript as MANE's GFF files a copy of it: `NM_000937.5-2`.
-_COPY = re.compile(r"^(N[MR]_\d+\.\d+)-\d+$")
-
-
-def _accession(named: str) -> str:
-    """The transcript's accession, without the number of the copy."""
-    found = _COPY.match(named)
-    return found.group(1) if found else named
-
-
-def read_gff(path: Path) -> dict:
-    """MANE's transcripts, by RefSeq accession: the mRNA's span and strand,
-    and its exons and its coding stretches, as the genome numbers them."""
-    import gzip
-
-    found: dict = {}
-    with gzip.open(path, "rt", encoding="utf-8") as stream:
-        for line in stream:
-            if line.startswith("#"):
-                continue
-            columns = line.rstrip("\n").split("\t")
-            if len(columns) < 9 or columns[2] not in ("mRNA", "exon", "CDS"):
-                continue
-            attributes = dict(item.split("=", 1) for item in columns[8].split(";")
-                              if "=" in item)
-            named = attributes.get("ID" if columns[2] == "mRNA" else "Parent", "")
-            if not named.startswith("rna-"):
-                continue
-            # A transcript MANE annotates on a patch scaffold is filed as a
-            # copy of its accession (`rna-NM_000937.5-2`).
-            entry = found.setdefault(_accession(named[4:]), {"exons": [], "cds": []})
-            start, end = int(columns[3]), int(columns[4])
-            if columns[2] == "mRNA":
-                entry.update(start=start, end=end, strand=1 if columns[6] == "+" else -1)
-            else:
-                entry["exons" if columns[2] == "exon" else "cds"].append((start, end))
-    return found
-
 
 # A run of bases, made up: the census's records are drawn at the DNA's stop,
 # whose letters are only ever the record's own.

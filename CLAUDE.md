@@ -94,6 +94,10 @@ differs from storage. A mismatch means the refactor changed data. Stop; never up
   Also which buildable proteins are offered (`withhold`, since 2026-11-13): only those expected to
   build whole, their fold from the PDB (a PDB entry placing 30+ residues within the PDB rule's
   method limits, UniProt evidence at protein level and annotation 5 of 5, 50 to 7,900 residues).
+  Since 2026-11-14 also: MANE Select exons alone under the gene page, by the record builder's own
+  test (`pipeline.mane.exons_over_page`), and a PDB entry that could pass the fold rule's coverage,
+  70% of a mature chain or 90% of a domain, UniProt's or Pfam's (`pipeline/structure/offer.py`);
+  the loader computes both and passes them in, as it does `pdb_reach`, so `app/` imports no pipeline.
   Every other is loaded unbuildable with the sentence search shows; a listed protein's gene never
   is, and a protein built already opens whatever its row says. The loader's `--every-buildable`
   writes the index as before.

@@ -287,6 +287,18 @@ def test_the_reach_is_the_most_residues_one_accepted_entry_places():
     assert pdb_reach(INSULIN) == 0
 
 
+def test_each_accepted_entrys_chains_are_its_stretches():
+    from app.protein_index import pdb_stretches
+
+    crystal = _pdb("1K5N", "X-ray", "2.10 A", "A/B=21-119")
+    blurred = _pdb("9ZZZ", "X-ray", "3.50 A", "A=1-119")
+    em = _pdb("8ABC", "EM", "3.80 A", "A=1-60, B=50-80")
+    model = _pdb("0MOD", "Model", "-", "A=1-119")
+    assert pdb_stretches(_with_pdb(crystal, blurred, em, model)) == [
+        ("1K5N", 21, 119), ("8ABC", 1, 60), ("8ABC", 50, 80)]
+    assert pdb_stretches(INSULIN) == []
+
+
 def _offered_row(**changed):
     return {"gene": "TTR", "uniprot": "P02766", "buildable": True, "unavailable_reason": None,
             "existence": 1, "annotation_score": 5, "length": 147, **changed}
@@ -319,6 +331,63 @@ def test_a_protein_not_expected_to_build_whole_says_why(changed, reach, said):
     assert offer_refusal(_offered_row(**changed), reach) == said
 
 
+def test_a_gene_whose_exons_alone_are_over_the_gene_page_is_not_offered():
+    from app.protein_index import offer_refusal
+
+    assert offer_refusal(_offered_row(), 1_200, exons=30_609) == (
+        "Its exons alone are 30,609 bp; the gene page holds 24,000.")
+    # Said last: a row withheld for another reason keeps its sentence.
+    assert offer_refusal(_offered_row(), 0, exons=30_609).startswith("No PDB entry places 30")
+    assert offer_refusal(_offered_row(length=8_797), 127, exons=30_609) == (
+        "8,797 residues; a build needs 7,900 or fewer.")
+
+
+def test_a_protein_no_pdb_entry_covers_enough_to_draw_is_not_offered():
+    from app.protein_index import offer_refusal
+
+    said = ("No PDB entry places 70% of a mature chain of it or 90% of one of its domains "
+            "(X-ray ≤ 3.0 Å, EM ≤ 4.0 Å, or NMR).")
+    assert offer_refusal(_offered_row(), 127, covered=False) == said
+    assert offer_refusal(_offered_row(), 127, covered=True) is None
+    # Said after every other: a row withheld before keeps its sentence.
+    assert offer_refusal(_offered_row(annotation_score=4), 127, covered=False) == (
+        "UniProt's annotation score for it is 4 of 5; a build needs 5.")
+    assert offer_refusal(_offered_row(), 1_200, 30_609, covered=False) == (
+        "Its exons alone are 30,609 bp; the gene page holds 24,000.")
+
+
+def test_the_coverage_rule_reads_each_rows_accession():
+    from app.protein_index import withhold
+
+    gfap = _offered_row(gene="GFAP", uniprot="P14136", length=432)
+    ttr = _offered_row()
+    listed = _offered_row(gene="INS", uniprot="P01308", length=110)
+    rows = [gfap, ttr, listed]
+    assert withhold(rows, {"P14136": 105, "P02766": 127, "P01308": 110}, {"INS"},
+                    uncovered={"P14136", "P01308"}) == 1
+    assert [row["buildable"] for row in rows] == [False, True, True]
+    assert gfap["unavailable_reason"].startswith("No PDB entry places 70% of a mature chain")
+
+
+def test_the_gene_page_rule_reads_each_rows_mane_select_transcript():
+    from app.protein_index import withhold
+
+    grin2b = _offered_row(gene="GRIN2B", uniprot="Q13224", length=1_484,
+                          refseq_nuc="NM_000834.5")
+    ttr = _offered_row(refseq_nuc="NM_000371.4")
+    listed = _offered_row(gene="DMD", uniprot="P11532", length=3_685, refseq_nuc="NM_004006.3")
+    rows = [grin2b, ttr, listed]
+    pages = {"NM_000834.5": 30_609, "NM_004006.3": 30_000}
+    assert withhold(rows, {"Q13224": 1_200, "P02766": 127, "P11532": 300}, {"DMD"}, pages) == 1
+    assert [row["buildable"] for row in rows] == [False, True, True]
+    assert grin2b["unavailable_reason"] == (
+        "Its exons alone are 30,609 bp; the gene page holds 24,000.")
+    # Without the pages, the rule is the one before 2026-11-14.
+    again = [_offered_row(gene="GRIN2B", uniprot="Q13224", length=1_484,
+                          refseq_nuc="NM_000834.5")]
+    assert withhold(again, {"Q13224": 1_200}, set()) == 0
+
+
 def test_only_buildable_rows_off_the_list_are_withheld():
     from app.protein_index import withhold
 
@@ -335,7 +404,8 @@ def test_only_buildable_rows_off_the_list_are_withheld():
 
 
 def test_the_rule_uses_the_pdb_rules_and_the_gene_pages_own_numbers():
-    from app.protein_index import OFFER_PLACED, OFFER_RESIDUES, OFFER_RESOLUTION
+    from app.protein_index import (OFFER_CHAIN, OFFER_DOMAIN, OFFER_PAGE_BP, OFFER_PLACED,
+                                   OFFER_RESIDUES, OFFER_RESOLUTION)
     from pipeline.structure import pdb_policy
     from pipeline.targets import GENE_PAGE_BUDGET_BP
 
@@ -345,3 +415,6 @@ def test_the_rule_uses_the_pdb_rules_and_the_gene_pages_own_numbers():
     assert OFFER_PLACED == pdb_policy.DOMAIN_MIN
     # The coding sequence alone of the longest protein offered fits the page.
     assert OFFER_RESIDUES[1] * 3 < GENE_PAGE_BUDGET_BP
+    assert OFFER_PAGE_BP == GENE_PAGE_BUDGET_BP
+    assert OFFER_CHAIN == pdb_policy.PRODUCT_COVERAGE
+    assert OFFER_DOMAIN == pdb_policy.DOMAIN_COVERAGE

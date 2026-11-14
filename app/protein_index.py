@@ -268,44 +268,68 @@ def rows_for_entry(
 # DOMAIN_MIN), the gene page's 24,000 bases (`GENE_PAGE_BUDGET_BP`, a little
 # over 7,900 residues of coding sequence alone), and a floor under which ESM-2's
 # alignment gate turned down most proteins tried. A well-studied protein
-# (annotated 5 of 5, evidence at protein level) is one the model knows.
+# (annotated 5 of 5, evidence at protein level) is one the model knows. The
+# residues' cap counts coding sequence alone; a gene whose exons alone, its
+# untranslated ends among them, are over the gene page is refused by the record
+# builder all the same, so it is not offered either (`OFFER_PAGE_BP`, the loader
+# finding them by the builder's own test: `pipeline.mane.exons_over_page`). And
+# since 2026-11-14 the fold rule's coverage test, as far as UniProt and Pfam can
+# tell it: an entry's chain placing `OFFER_CHAIN` of a mature chain, or
+# `OFFER_DOMAIN` of a domain of `OFFER_PLACED` or more residues
+# (`pipeline.structure.offer`), the more lenient side of the rule's own test.
 OFFER_RESOLUTION = {"X-ray": 3.0, "Neutron": 3.0, "EM": 4.0, "NMR": None}
 OFFER_PLACED = 30
 OFFER_RESIDUES = (50, 7_900)
+OFFER_PAGE_BP = 24_000
+OFFER_CHAIN = 0.70
+OFFER_DOMAIN = 0.90
 OFFER_ANNOTATION = 5
 OFFER_EXISTENCE = 1
 _EXISTENCE = {2: "evidence at transcript level", 3: "inferred from homology",
               4: "predicted", 5: "uncertain"}
 
 
-def pdb_reach(entry: dict) -> int:
-    """The most residues one experimental structure of this protein places,
-    among the PDB entries UniProt maps to it by a method and resolution the PDB
-    rule accepts (`OFFER_RESOLUTION`); 0 where there is none.
-
-    UniProt names each entry's chains and the residues they cover
-    (``A/B=21-119``), mapped by SIFTS to the canonical sequence; a residue two
-    chains cover counts once."""
-    best = 0
+def pdb_stretches(entry: dict) -> List[Tuple[str, int, int]]:
+    """The stretches of this protein its experimental structures place, among
+    the PDB entries UniProt maps to it by a method and resolution the PDB rule
+    accepts (`OFFER_RESOLUTION`): each entry's id, and the first and last
+    residues one of its chains covers. UniProt names each entry's chains and
+    the residues they cover (``A/B=21-119, C=1-50`` is two stretches), mapped by
+    SIFTS to the canonical sequence."""
+    found = []  # type: List[Tuple[str, int, int]]
     for xref in _xrefs(entry, "PDB"):
         method = _property(xref, "Method")
         if method not in OFFER_RESOLUTION:
             continue
         limit = OFFER_RESOLUTION[method]
         if limit is not None:
-            found = re.match(r"\s*([0-9.]+)", _property(xref, "Resolution") or "")
-            if found is None or float(found.group(1)) > limit:
+            resolution = re.match(r"\s*([0-9.]+)", _property(xref, "Resolution") or "")
+            if resolution is None or float(resolution.group(1)) > limit:
                 continue
-        placed = set()  # type: Set[int]
         for first, last in re.findall(r"=([0-9]+)-([0-9]+)", _property(xref, "Chains") or ""):
-            placed.update(range(int(first), int(last) + 1))
-        best = max(best, len(placed))
-    return best
+            found.append((xref.get("id") or "", int(first), int(last)))
+    return found
 
 
-def offer_refusal(row: dict, reach: int) -> Optional[str]:
+def pdb_reach(entry: dict) -> int:
+    """The most residues one experimental structure of this protein places
+    (`pdb_stretches`); 0 where there is none. A residue two chains of an entry
+    cover counts once."""
+    placed = {}  # type: Dict[str, Set[int]]
+    for entry_id, first, last in pdb_stretches(entry):
+        placed.setdefault(entry_id, set()).update(range(first, last + 1))
+    return max((len(residues) for residues in placed.values()), default=0)
+
+
+def offer_refusal(row: dict, reach: int, exons: Optional[int] = None,
+                  covered: bool = True) -> Optional[str]:
     """Why a buildable row is not offered to be built, as the search says it;
-    None where it is. `reach` is its `pdb_reach`."""
+    None where it is. `reach` is its `pdb_reach`; `exons` the total of its MANE
+    Select exons where the record builder refuses them as over the gene page
+    (`pipeline.mane.exons_over_page`), and None where it does not; `covered`
+    False where none of its PDB entries could pass the fold rule's coverage
+    (`pipeline.structure.offer`). The sentences are said in this order, so a
+    row withheld before keeps its sentence."""
     if reach < OFFER_PLACED:
         return ("No PDB entry places {} or more of its residues (X-ray ≤ {:.1f} Å, "
                 "EM ≤ {:.1f} Å, or NMR).").format(
@@ -321,19 +345,36 @@ def offer_refusal(row: dict, reach: int) -> Optional[str]:
         return "{:,} residues; a build needs {:,} or more.".format(row["length"], low)
     if row["length"] > high:
         return "{:,} residues; a build needs {:,} or fewer.".format(row["length"], high)
+    if exons is not None:
+        return "Its exons alone are {:,} bp; the gene page holds {:,}.".format(
+            exons, OFFER_PAGE_BP)
+    if not covered:
+        return ("No PDB entry places {:.0%} of a mature chain of it or {:.0%} of one of its "
+                "domains (X-ray ≤ {:.1f} Å, EM ≤ {:.1f} Å, or NMR).").format(
+            OFFER_CHAIN, OFFER_DOMAIN, OFFER_RESOLUTION["X-ray"], OFFER_RESOLUTION["EM"])
     return None
 
 
-def withhold(rows: List[dict], reach: Dict[str, int], listed: Set[str]) -> int:
+def withhold(rows: List[dict], reach: Dict[str, int], listed: Set[str],
+             pages: Optional[Dict[str, int]] = None,
+             uncovered: Optional[Set[str]] = None) -> int:
     """Leave buildable only the rows offered (`offer_refusal`), each other one
     saying why; never a listed protein's gene, which the catalog draws and its
-    search must find buildable. `reach` is `pdb_reach` by accession. Returns
-    how many were withheld."""
+    search must find buildable. `reach` is `pdb_reach` by accession; `pages`
+    the exons' total of each MANE Select transcript over the gene page
+    (`pipeline.mane.exons_over_page`), by its RefSeq accession; and
+    `uncovered` the accessions none of whose PDB entries could pass the fold
+    rule's coverage (`pipeline.structure.offer.uncovered`). Returns how many
+    were withheld."""
+    pages = pages or {}
+    uncovered = uncovered or set()
     withheld = 0
     for row in rows:
         if not row["buildable"] or row["gene"] in listed:
             continue
-        reason = offer_refusal(row, reach.get(row["uniprot"], 0))
+        reason = offer_refusal(row, reach.get(row["uniprot"], 0),
+                               pages.get(row.get("refseq_nuc") or ""),
+                               row["uniprot"] not in uncovered)
         if reason is not None:
             row["buildable"], row["unavailable_reason"] = False, reason
             withheld += 1

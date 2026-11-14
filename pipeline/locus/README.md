@@ -373,11 +373,91 @@ RPS6KA5, SMAD2, ZBTB20).
 
 ## Atlas 26.0 is its own project
 
-The Atlas's site serves 26.0 since this snapshot was built. Moving to it is
-one new snapshot, pinned, plus a review. Measured on 2026-11-13:
-- 3,480 paths change, 8 of them curated zooms;
-- the rule stops on 185 proteins, at names its tables lack;
-- four new cell names (cDCs, Basophils, Bone marrow MSCs, Enteroendocrine
-  cells) need a class and a home.
+The Atlas's site serves 26.0 since this snapshot was built. **On 2026-11-14
+the user chose to stay on 25.1 for now**, after the measurement below. 25.1
+is a released, citable version, and every Atlas link a locus carries points
+at `v25.proteinatlas.org`. Never read the live Atlas gene by gene: that would
+move zooms to 26.0 unasked.
 
-Never read the live Atlas gene by gene.
+### What 26.0 changes
+
+Measured on 2026-11-13 by the planning census, over the 7,311 proteins then
+offered, with rule v2 on both releases (`path_of_v2`; rule v3 came after).
+Its per-protein results are `handoff-zoom-for-built/results/analysis.jsonl`
+in the workspace, outside this repository, recounted on 2026-11-14.
+
+| | Proteins |
+|---|---|
+| Offered, curated included | 7,311 |
+| In neither release | 18 |
+| Stopped at a cell type 26.0 names and 25.1 does not | 185 |
+| With a path in both | 7,108 |
+| Path the same | 3,628 |
+| **Path changed** | **3,480** (49%) |
+| to another organ | 2,604 |
+| the same organ, another cell | 777 |
+| the same organ and cell, only the basis (`tissue_from`, `cell_from`) | 99 |
+
+- The 185 stop at cDCs (65), Basophils (43), Bone marrow MSCs (40) and
+  Enteroendocrine cells (37). Each needs a class and a home before such a
+  protein has a zoom.
+- Eight curated zooms change: APP, DNM1, EPO, LOXL2, PRNP, RLN2, S100B and
+  UBB.
+- Over all genes, 26.0 also changes the tissue specificity of 1,690, the
+  specific tissue levels of 2,233, the main subcellular locations of 222 and
+  the secretome of 17. The tissue cell type pairs and the tissue
+  distributions are unchanged.
+
+### Why so many move
+
+Nearly all of it is one change: 26.0 reprocessed its single-cell data.
+- 3,299 of the 5,049 genes 25.1 calls "Cell type enhanced" are "Low cell type
+  specificity" in 26.0. Enhanced is the Atlas's weakest specificity category.
+- A gene specific to no tissue takes its organ from the home of its first
+  enhanced cell type (the rule's second way, `tissue_from` `cell_type`). Where
+  26.0 drops that call, the gene falls to its tissue cell type pairs or to
+  nothing, and its organ moves.
+
+| How 25.1 chose the organ | Proteins | Organ changes in 26.0 |
+|---|---|---|
+| A specific tissue (`tissue`) | 3,374 | 530 |
+| A cell type's home (`cell_type`) | 2,993 | 2,070 |
+| A tissue cell type pair (`tissue_cell_type`) | 483 | 2 |
+| None | 258 | 2 |
+
+- The 530 are all genes 26.0 no longer calls "Tissue enhanced" (612 lose
+  it). None moves from one specific tissue to another.
+- Where the Atlas is confident, nothing moves: of the 2,762 genes specific to
+  a tissue in both releases, none changes organ (595 change only below it).
+- So the move would mostly swap one weak destination for another, for about
+  2,000 genes of low tissue specificity. It corrects no confident placement.
+- It also shows that about 40% of zooms (2,993 of 7,108) take their organ from
+  the weakest call, "Cell type enhanced".
+
+### What is not known
+
+- **The counts under rule v3.** v3 sends a gene that falls through to the
+  tissue its RNA is highest in, so some would land back in their 25.1 organ.
+  The 26.0 consensus and single-cell tables, which v3 reads, were not kept.
+- **Which release's single-cell calls are right.** 26.0's release notes
+  would say; they have not been read.
+
+### When to revisit
+
+- When 26.0's release notes show that its reprocessing fixed real errors.
+- Ideally before the app's store release, while few proteins are built:
+  every built protein's stored locus must be made again, or versions mix
+  (`check_built.py` holds each locus to the snapshot).
+
+### How to move
+
+1. Build a snapshot from 26.0's download files and pin its digest in
+   `inputs.py` (`INPUTS_SHA256`, `INPUTS_CREATED`), beside the old one in
+   `pinned/`.
+2. Give the four new cell types a class and a home in the bake's tables
+   (`cell_types.py`: `single`, `homes`, `cell_class`), and a cell the app's
+   zoom can draw.
+3. Re-run the census with the current rule (above). Review the changes with
+   the user, the eight curated first.
+4. Re-bake the curated loci and make every built protein's again
+   (`scripts/queue_locus.py --all`). Both are production writes, asked first.

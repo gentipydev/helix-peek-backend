@@ -163,8 +163,11 @@ protein is built with the Mac off: its `fold` and `evidence` functions run the M
 environment, pinned whole in `pipeline/impact/requirements-lock.txt`, `uv` and the AlphaGenome
 skill). The fold's image is the app's checkout as it was at the deploy: deploy again after a
 change to `lib/shared/folding/`, `test/fold_bundle_check.dart` or the flutter_scene pin.
-`RESOLVER_STRUCTURES=0` / `RESOLVER_EVIDENCE=0` in the shell that runs `modal deploy` turn
-either off there.
+`RESOLVER_STRUCTURES=0` / `RESOLVER_EVIDENCE=0` in the shell that runs the deploy turn
+either off there. Deploy only with `scripts/deploy_modal.py`, never `modal deploy` by hand: it
+refuses unless this checkout and the app's are clean, at their `origin/main`, and `ci` passed
+on both (`--check` asks, `--force` is for an emergency). Modal is not deployed from CI: its
+images read the app's checkout and the AlphaGenome skill, which is in neither repository.
 
 The dev Mac may run the same worker beside it, or instead of it, as a launchd agent:
 `local_worker.py`, the same `worker.sweep` and `worker.score_all`, with `.env` for the secret
@@ -245,6 +248,12 @@ again and compares the sha256 with the served row's. A change to `train.py`, `he
 
 `.venv/bin/pytest` (on Windows, `.venv\Scripts\python -m pytest`) runs `tests/` and `pipeline/`
 (`pytest.ini`). pytest must never hit the network: not NCBI, not Supabase, not Render.
+
+CI (`.github/workflows/ci.yml`) runs the same suite on every push and pull request, on
+Python 3.9 and 3.12 (3.12 with the Modal client), against a Postgres 17 service container,
+so the SQL tests run there too, and builds the service's image. With Render's Auto-Deploy on
+"After CI Checks Pass" (a dashboard setting), `main` deploys only after it passes, so a red
+`ci` holds production where it is.
 
 - `conftest.py` sets `NCBI_EMAIL` before importing the app.
 - Every Entrez call is patched: `efetch_returning(text)` / `efetch_raising(exc)` replace

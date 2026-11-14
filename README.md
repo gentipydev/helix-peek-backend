@@ -283,6 +283,17 @@ Auth is not here yet, and neither is `/summary`. Parsing covers one gene per
 request — there is no endpoint that returns every gene in a record, because no
 client needs one yet.
 
+## CI and deploys
+
+- `.github/workflows/ci.yml`, on every push and pull request: `pytest` on Python 3.9 and
+  3.12 (3.12 with the Modal client, for the Modal app's shape tests), against a Postgres 17
+  service container so the SQL tests run, and a `docker build` of the service's image.
+- Render deploys `main`. With its Auto-Deploy on "After CI Checks Pass", a commit deploys
+  only once `ci` passed on it.
+- Modal is deployed from the dev Mac with `scripts/deploy_modal.py` (`--check` first),
+  which refuses unless both checkouts match GitHub and `ci` passed on them.
+- `keepalive.yml` pings the service every ten minutes and the database once a day.
+
 ## Layout
 
 ```

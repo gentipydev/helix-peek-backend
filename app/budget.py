@@ -17,7 +17,7 @@ minutes, and the wake endpoint. Measured on 2026-11-13, a whole day of both was
 about three cents.
 
 Changing a limit is a code change: push it (the service) and deploy the
-resolver again (`modal deploy pipeline/resolver/modal_app.py`).
+resolver again (`scripts/deploy_modal.py`).
 """
 
 from typing import Optional, Tuple

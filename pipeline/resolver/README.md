@@ -335,8 +335,16 @@ From the repository root, in order.
    ```sh
    python3 -m venv .modal-venv && .modal-venv/bin/pip install -r pipeline/resolver/requirements.txt
    .modal-venv/bin/modal token new          # once, in a browser
-   .modal-venv/bin/modal deploy pipeline/resolver/modal_app.py
+   .venv/bin/python scripts/deploy_modal.py --check   # may a deploy go?
+   .venv/bin/python scripts/deploy_modal.py           # runs `modal deploy`
    ```
+
+   Every deploy goes through `scripts/deploy_modal.py`, never `modal deploy`
+   by hand: it deploys only when this checkout and the app's are clean and at
+   their `origin/main`, `ci` passed on both commits, and the locus inputs and
+   the AlphaGenome skill are in place, and it prints both commits (`--force`
+   past the checks is for an emergency). On 2026-11-13 Modal ran a commit
+   GitHub did not have; this is what stops that.
 
    The first deploy builds the four images: the scorer's downloads the 650M
    weights into it, and the fold's Flutter (1.6 GB) and PyMOL (a few minutes
@@ -574,8 +582,9 @@ the Mac's worker makes, so a protein is built with the Mac off.
    A10 ($1.10) (`modal_app.SCORER_GPU`, in that order). The fold and the
    evidence run on CPUs, cents a month.
 2. The secret's five keys, step 2 of "Deploying, once".
-3. `.modal-venv/bin/modal deploy pipeline/resolver/modal_app.py`, from a
-   checkout that has the locus inputs' snapshot (git keeps it, in
+3. `.venv/bin/python scripts/deploy_modal.py`, which deploys only what
+   GitHub has and `ci` passed on (step 3 of "Deploying, once"). The locus
+   inputs' snapshot comes with the checkout (git keeps it, in
    `pipeline/locus/pinned/`, since 2026-11-14).
 4. Optionally the wake, step 4 of "Deploying, once", and `RESOLVES_PER_DAY`.
 5. The Mac's worker may stay beside it, or go: `scripts/resolver_worker.sh uninstall`.

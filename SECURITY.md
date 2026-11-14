@@ -123,7 +123,7 @@ each cap is. `modal billing summary` is Modal's own bill.
 |---|---|
 | Stop every build at once | `modal app stop helix-peak-resolver` (deploy again to restart) |
 | Stop new asks, keep reads | set `RESOLVES_PER_DAY=0` on Render |
-| Tighten the money | lower `DAY_USD` / `MONTH_USD` in `app/budget.py`, push, `modal deploy pipeline/resolver/modal_app.py` |
+| Tighten the money | lower `DAY_USD` / `MONTH_USD` in `app/budget.py`, push, and once `ci` passes, `scripts/deploy_modal.py` (`--force` if it cannot wait) |
 | See what was spent | `scripts/spend.py`; `modal billing report --for today --show-resources` |
 
 Rotating a credential, if one ever leaks:

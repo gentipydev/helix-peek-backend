@@ -2,9 +2,11 @@
 built with the Mac off.
 
 From the repository root, with the Modal CLI logged in to the workspace
-(`pip install -r pipeline/resolver/requirements.txt`, then `modal token new`):
+(`pip install -r pipeline/resolver/requirements.txt`, then `modal token new`),
+through the deploy guard, which runs `modal deploy` on this file only once both
+checkouts match GitHub and `ci` passed on them:
 
-    modal deploy pipeline/resolver/modal_app.py
+    .venv/bin/python scripts/deploy_modal.py
 
 It reads one secret from that workspace, `helix-peak-resolver`: the uploader's
 three credentials (DATABASE_URL, SUPABASE_URL, SUPABASE_SERVICE_KEY), NCBI's

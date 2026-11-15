@@ -1,8 +1,8 @@
 """Upload baked track assets to Supabase storage and record where they landed.
 
     DATABASE_URL=... SUPABASE_URL=... SUPABASE_SERVICE_KEY=... \
-        python3 pipeline/upload_tracks.py --kind impact_explanations
-    python3 pipeline/upload_tracks.py --kind impact_explanations --dry-run
+        python3 pipeline/upload_tracks.py --kind clinvar
+    python3 pipeline/upload_tracks.py --kind clinvar --dry-run
 
 The files come from `pipeline/data/` (`paths.DATA`), where the bakes write them.
 
@@ -54,7 +54,6 @@ if str(BACKEND) not in sys.path:
     sys.path.insert(0, str(BACKEND))
 
 from pipeline import check_assets  # noqa: E402
-from pipeline.impact.check_explanations import validate as validate_explanations  # noqa: E402
 from pipeline.paths import CLIENT, DATA  # noqa: E402
 from pipeline.targets import TARGETS  # noqa: E402
 
@@ -110,8 +109,6 @@ def asset_of(kind: str, target) -> Path | None:
     """The local file for this kind, or None where this protein has none."""
     if kind == "record":
         return DATA / target.mock_asset
-    if kind == "impact_explanations":
-        return DATA / f"assets/impact_explanations/{target.slug}.json"
     if kind == "constraint":
         return DATA / target.constraint_asset if target.scored else None
     if kind == "impact":
@@ -177,18 +174,6 @@ def validate(kind: str, target, payload: bytes) -> dict:
                 "protein_id": target.source.protein_id,
                 "transcript_id": target.source.transcript_id,
                 "built_by": "pipeline/mock/build_gene_record.py"}
-
-    if kind == "impact_explanations":
-        impact = (DATA / target.impact_asset).read_bytes()
-        # The same check the endpoint used to make on every read, made once on
-        # the way in: scorer, schema version, and the digest binding this
-        # payload to the exact AVI track it explains.
-        validate_explanations(impact, data)
-        if data.get("accession") != target.source.accession or data.get("gene") != target.gene:
-            raise ValueError("accession/gene do not match the target")
-        return {key: data.get(key) for key in
-                ("scorer", "units", "scope", "selection", "schema_version",
-                 "generated_at", "client_version", "impact_sha256")}
 
     if kind == "constraint":
         if data.get("gene") != target.gene:
@@ -331,7 +316,7 @@ on conflict (slug, kind) do update set
 def main() -> int:
     parser = argparse.ArgumentParser(description="Upload baked tracks to Supabase.")
     parser.add_argument("--kind", required=True, choices=[
-        "record", "impact_explanations", "constraint", "impact", "clinvar", "structure",
+        "record", "constraint", "impact", "clinvar", "structure",
         "folding", "locus"])
     parser.add_argument("--target", action="append", default=None)
     parser.add_argument("--dry-run", action="store_true")

@@ -377,7 +377,6 @@ def resolve(row: IndexRow, entry: Entry, *, mane_release: str | None = None,
         },
         "chains": [],
         "chrome": None,
-        "impact_explanations": False,
     }
     try:
         protein = protein_row(target, curated)

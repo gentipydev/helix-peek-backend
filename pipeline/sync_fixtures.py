@@ -12,7 +12,6 @@ The app's tests read a curated protein from three places (its CLAUDE.md):
 | `test/fixtures/constraint/<slug>_esm_constraint.json` | constraint |
 | `test/fixtures/impact/<slug>_avi.json` | impact |
 | `test/fixtures/clinvar/<slug>_clinvar.json` | clinvar |
-| `test/fixtures/impact_explanations/<slug>.json` | impact_explanations, where it has one |
 | `test/fixtures/models/<slug>.glb` | structure (the `.glb` its scene is compiled from) |
 | `test/features/zoom/fixtures/<slug>_locus.json` | locus |
 | `test/shared/folding/fixtures/<slug>_folding.json` | folding |
@@ -63,7 +62,6 @@ def fixture_paths(target: Target) -> Dict[str, str]:
         "constraint": f"test/fixtures/constraint/{target.slug}_esm_constraint.json",
         "impact": f"test/fixtures/impact/{target.slug}_avi.json",
         "clinvar": f"test/fixtures/clinvar/{target.slug}_clinvar.json",
-        "impact_explanations": f"test/fixtures/impact_explanations/{target.slug}.json",
         "structure": f"test/fixtures/models/{target.slug}.glb",
         "locus": f"test/features/zoom/fixtures/{target.slug}_locus.json",
         "folding": f"test/shared/folding/fixtures/{target.slug}_folding.json",
@@ -100,7 +98,6 @@ def local_row(target: Target, kinds: List[str]) -> dict:
         "impact": target.impact_scored,
         "clinvar": target.clinvar_available,
         "structure": target.structure is not None,
-        "impact_explanations": curated["impact_explanations"],
     }
     row["tracks"] = {kind: "ready" if baked.get(kind) and (DATA / fetch_tracks.asset_path(
         kind, target)).exists() else "absent" for kind in kinds}

@@ -46,8 +46,7 @@ from pipeline.paths import CLIENT, DATA  # noqa: E402
 from pipeline.targets import TARGETS, Target  # noqa: E402
 
 SERVICE = "https://helix-peak-backend.onrender.com"
-KINDS = ("record", "constraint", "impact", "clinvar", "impact_explanations", "structure",
-         "folding", "locus")
+KINDS = ("record", "constraint", "impact", "clinvar", "structure", "folding", "locus")
 
 
 def asset_path(kind: str, target: Target) -> str:
@@ -65,8 +64,6 @@ def asset_path(kind: str, target: Target) -> str:
         return target.impact_asset
     if kind == "clinvar":
         return f"assets/clinvar/{target.slug}_clinvar.json"
-    if kind == "impact_explanations":
-        return f"assets/impact_explanations/{target.slug}.json"
     if kind == "structure":
         return target.structure_asset
     if kind == "folding":
@@ -210,7 +207,7 @@ def verify_client(service: str, client: Path) -> int:
     # A client checkout keeps them under `assets/`; its test fixtures, from
     # Phase 4 on, keep the same six directories at their own root.
     root = client / "assets" if (client / "assets").is_dir() else client
-    families = ("mock", "constraint", "impact", "clinvar", "models", "impact_explanations")
+    families = ("mock", "constraint", "impact", "clinvar", "models")
     for family in families:
         directory = root / family
         if not directory.is_dir():

@@ -59,7 +59,6 @@ def curated_rows() -> dict[str, dict]:
             "facts": protein["facts"],
             "chains": protein["chains"],
             "chrome": protein.get("structure"),
-            "impact_explanations": "impact_explanations" in protein.get("tracks", []),
         }
     return rows
 
@@ -161,7 +160,6 @@ def track_rows(target: Target, curated: dict) -> list[dict]:
         "constraint": target.scored,
         "impact": target.impact_scored,
         "clinvar": target.clinvar_available,
-        "impact_explanations": curated["impact_explanations"],
         "structure": curated["chrome"] is not None,
     }
     rows = [{

@@ -6,7 +6,6 @@ from typing import Optional
 from urllib.error import HTTPError, URLError
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Path, Query, Response
-from fastapi.responses import RedirectResponse
 
 from . import catalog, lm_runs, resolves, suggest, tracks
 from .catalog import CatalogUnavailable
@@ -28,7 +27,6 @@ from .schemas import (
     SuggestResponse,
     Track,
 )
-from .impact_explanations import NOT_COVERED, read_impact_explanations, stored_url
 
 router = APIRouter()
 
@@ -47,29 +45,6 @@ def _catalog_errors():
         yield
     except CatalogUnavailable as exc:
         raise HTTPException(status_code=503, detail=str(exc))
-
-
-@router.get("/gene/{id}/{gene}/impact-explanations", response_model=None)
-def impact_explanations(id: str = Path(max_length=64), gene: str = Path(max_length=64)):
-    """A saved attribution payload; no Atlas credentials or inference at runtime.
-
-    Where storage holds it, the client is redirected there and fetches the
-    bytes itself: cftr's payload is 3.98 MB, and carrying it would put it
-    through 512 MB of memory and a tenth of a CPU for no gain. The redirect
-    keeps the endpoint's contract -- a client that follows it, as Dio does by
-    default, still receives the JSON it always received.
-    """
-    found = stored_url(id, gene)
-    if found is NOT_COVERED:
-        raise HTTPException(
-            status_code=404,
-            detail="AVI explanations are not included for this gene.",
-        )
-    if found is not None:
-        # 307 rather than 302: the method must survive the hop, and the target
-        # is where the bytes are today rather than where they will always be.
-        return RedirectResponse(found, status_code=307)
-    return read_impact_explanations(id, gene)
 
 
 def _upstream_message(exc: HTTPError) -> str:

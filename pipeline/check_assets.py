@@ -40,7 +40,6 @@ BACKEND = Path(__file__).resolve().parents[1]
 if str(BACKEND) not in sys.path:
     sys.path.insert(0, str(BACKEND))
 
-from pipeline.impact.check_explanations import validate as validate_explanations  # noqa: E402
 from pipeline.paths import CURATED, DATA  # noqa: E402
 from pipeline.targets import TARGETS, Target, partition  # noqa: E402
 
@@ -101,7 +100,6 @@ def curated_catalog() -> dict[str, dict]:
             "scored": "constraint" in kinds,
             "impact_scored": "impact" in kinds,
             "clinvar_available": "clinvar" in kinds,
-            "impact_explanations": "impact_explanations" in kinds,
         }
     return rows
 
@@ -276,8 +274,7 @@ def check_against(base_url: str, catalog: dict[str, dict]) -> None:
         states = row.get("tracks") or {}
         for kind, baked in (("constraint", target.scored),
                             ("impact", target.impact_scored),
-                            ("clinvar", target.clinvar_available),
-                            ("impact_explanations", curated["impact_explanations"])):
+                            ("clinvar", target.clinvar_available)):
             if kind not in states:
                 fail(f"{where} has no {kind} track state")
             elif states[kind] == "refused" and baked:
@@ -749,15 +746,6 @@ if __name__ == "__main__":
 
     for target in chosen:
         check(target, catalog)
-        attribution = DATA / f"assets/impact_explanations/{target.slug}.json"
-        included = catalog.get(target.slug, {}).get("impact_explanations", False)
-        if attribution.exists() != included:
-            fail(f"{target.slug}: attribution asset and catalog availability disagree")
-        elif included:
-            try:
-                validate_explanations((DATA / target.impact_asset).read_bytes(), json.loads(attribution.read_text()))
-            except (AssertionError, KeyError, TypeError, ValueError) as error:
-                fail(f"{target.slug}: invalid AVI explanations: {error}")
 
     # The compiled `.fsceneb` used to be checked here, out of
     # flutter_scene_generated/, because that was what shipped. Phase 5 fetches
@@ -781,7 +769,6 @@ if __name__ == "__main__":
             + ([t.constraint_asset] if t.scored else [])
             + ([t.impact_asset] if t.impact_scored else [])
             + ([f"assets/clinvar/{t.slug}_clinvar.json"] if t.clinvar_available else [])
-            + ([f"assets/impact_explanations/{t.slug}.json"] if catalog[t.slug]["impact_explanations"] else [])
         )
     )
     # The models, as the bake left them. Not what a phone downloads -- the

@@ -23,7 +23,6 @@ from pipeline.targets import TARGETS
     "pipeline.seed_catalog",
     "pipeline.upload_tracks",
     "pipeline.fetch_tracks",
-    "pipeline.impact.check_explanations",
     "pipeline.mane",
     "pipeline.locus.bake_locus",
     "pipeline.locus.check_locus",
@@ -62,8 +61,7 @@ def _served(target):
         "chains": (row["structure"] or {}).get("chains", []),
         "structure": (row["structure"] or {}).get("chrome"),
         "catalog_order": row["catalog_order"],
-        "tracks": {kind: "ready" for kind in
-                   ("constraint", "impact", "clinvar", "impact_explanations")},
+        "tracks": {kind: "ready" for kind in ("constraint", "impact", "clinvar")},
     }
 
 

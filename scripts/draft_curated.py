@@ -52,8 +52,8 @@ if str(BACKEND) not in sys.path:
 
 DRAFT = "DRAFT:"
 SPEC = re.compile(r"^([A-Za-z0-9-]+)=([a-z0-9][a-z0-9-]*)(?:@([0-9A-Za-z]{4}))?$")
-# The families every curated row so far is baked with (`curated/catalog.json`'s
-# `tracks`); AVI explanations are a pilot of three, not drafted.
+# The families every curated row is baked with (`curated/catalog.json`'s
+# `tracks`).
 TRACKS = ["clinvar", "constraint", "impact", "structure"]
 
 

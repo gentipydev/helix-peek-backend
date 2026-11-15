@@ -46,8 +46,9 @@ differs from storage. A mismatch means the refactor changed data. Stop; never up
 - Is: `/gene/{id}/{gene}` (read-through cache of whole records), `/catalog`, `/catalog/search`,
   `/protein/{slug}`, `/protein/{slug}/tracks`, `/proteins/suggest`, `/proteins/built`, `/proteins/resolve` (POST,
   GET `/{gene}`, and POST `/{gene}/stop`, `/{gene}/keep`, `/{gene}/discard`), `/proteins/stopped`
-  (POST: one install's stopped builds still to decide), `.../impact-explanations`,
-  `/peptide-lm/runs/{name}`, `/health`, `/health/db`.
+  (POST: one install's stopped builds still to decide), `/peptide-lm/runs/{name}`,
+  `/health`, `/health/db`. (`.../impact-explanations`, the AVI contributions route, was removed
+  with the app's contributions page on 2026-11-15, at the user's word.)
   It writes `genbank_record`, one `resolve_request` row per new ask, and a reader's decision on a
   build they stopped (0014): Keep is `kept_at` on the stopped bake; Discard deletes the protein's
   rows (never a curated one's) and every request for its gene at once, and writes a
@@ -86,7 +87,6 @@ differs from storage. A mismatch means the refactor changed data. Stop; never up
 - `genbank_parser.py`: `extract_gene(record, gene)`. Pure, exact `/gene` match, 1-based inclusive.
 - `catalog.py`: reads `protein` and `protein_alias`. Raises `CatalogUnavailable` (503) and never answers empty.
 - `tracks.py`: `protein_track` rows become `{kind: Track}` with public storage URLs. Any kind with a row is served; `KINDS` is the floor.
-- `impact_explanations.py`: AVI explanations. Storage redirect first, then the local directory.
 - `lm_runs.py`: `/peptide-lm/runs/{name}`, a recorded training run of the de novo peptide model
   (`lm_run`, `0013`), named as a ready track is: URL, sha256, provenance. No pool or a failed read
   is a 503, never a 404.
@@ -138,8 +138,7 @@ Each file is one transaction, additive, with RLS on and no policies.
 
 The Dockerfile copies only `requirements.txt` and `app/`, so `import pipeline` in `app/`
 breaks the deployed service at import. Pipeline code also needs bake environments (ESM,
-AlphaGenome, PyMOL) and write credentials. `config.impact_explanations_dir` defaults to a
-path under `pipeline/data/`; that is the only link, and it is a path, not an import.
+AlphaGenome, PyMOL) and write credentials.
 
 `pipeline/resolver/` (Phase 6) is the one part of `pipeline/` that runs unattended: on Modal,
 with the uploader's credentials and the Atlas's key in a Modal secret, calling the record
@@ -278,7 +277,7 @@ so the SQL tests run there too, and builds the service's image. With Render's Au
 | Any other HTTP status | 502, with the upstream body in `detail` |
 | DNS failure, refused connection, timeout (`URLError` / `OSError`) | 502 |
 
-503 means our own source is unreadable (catalog, protein index, explanations directory), never
+503 means our own source is unreadable (catalog, protein index), never
 answered as empty or 404: that would say a protein does not exist when nobody could look.
 
 A valid response is recognised positively: it parses as GenBank, or it is not a record.

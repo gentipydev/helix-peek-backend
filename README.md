@@ -68,19 +68,6 @@ substring test would be wrong.
 There is also `GET /health` → `{"status": "ok"}`, which checks the service is up
 without spending an NCBI request.
 
-### AVI contribution details
-
-`GET /gene/{id}/{gene}/impact-explanations` redirects to the stored, validated
-attribution payload for INS, HBB and CFTR. Without a database it can read local
-pipeline files by exact accession/gene identity, with no NCBI or Atlas calls.
-Missing coverage returns 404; malformed or unmounted local data returns 503.
-
-`IMPACT_EXPLANATIONS_DIR` defaults to `pipeline/data/assets/impact_explanations`.
-Run `python3 pipeline/fetch_tracks.py` to populate it locally, or configure a
-mounted directory. The deployed client reads explanations through track URLs.
-The endpoint does not require an AlphaGenome API key.
-[Baking and the contract](../helix-peek/docs/avi-contributions.md).
-
 ## Setup
 
 `NCBI_EMAIL` is required. NCBI rejects and eventually blocks traffic with no

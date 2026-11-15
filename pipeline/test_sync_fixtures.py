@@ -22,7 +22,7 @@ from pipeline.paths import CLIENT, DATA  # noqa: E402
 from pipeline.targets import BY_SLUG, TARGETS  # noqa: E402
 
 INSULIN, LYSOZYME = BY_SLUG["insulin"], BY_SLUG["lysozyme"]
-KINDS = ["record", "constraint", "impact", "clinvar", "structure", "impact_explanations"]
+KINDS = ["record", "constraint", "impact", "clinvar", "structure"]
 
 
 def _row(slug: str, order: int) -> dict:

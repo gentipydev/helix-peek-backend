@@ -32,7 +32,6 @@ KINDS = (
     "impact",
     "clinvar",
     "structure",
-    "impact_explanations",
 )
 
 _BUCKET_OF_KIND = {"structure": "models"}

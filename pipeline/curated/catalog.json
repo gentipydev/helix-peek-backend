@@ -42,7 +42,6 @@
         "clinvar",
         "constraint",
         "impact",
-        "impact_explanations",
         "structure"
       ]
     },

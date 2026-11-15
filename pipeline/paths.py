@@ -32,8 +32,7 @@ DATA = Path(os.environ.get("HELIXPEEK_DATA") or PIPELINE / "data")
 # they are moved out of the bundle.
 CLIENT = Path(os.environ.get("HELIXPEEK_CLIENT") or WORKSPACE / "helix-peek")
 
-# The AlphaGenome skills: GENCODE lookups for the impact bake, and the Atlas
-# client for the explanations bake.
+# The AlphaGenome skills: GENCODE lookups for the impact bake.
 SKILLS = Path(os.environ.get("ALPHAGENOME_SKILLS") or WORKSPACE / ".claude" / "skills")
 
 # The twenty curated proteins' hand-written fields: display name, summary, chain

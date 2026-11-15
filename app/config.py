@@ -38,14 +38,6 @@ class Settings(BaseSettings):
     # is about picking up NCBI's own corrections rather than about staleness.
     cache_ttl_days: int = 30
 
-    # Generated artifacts can be mounted here in a deployed service. The local
-    # default reads the backend pipeline's fetched or baked payloads.
-    # A directory that is not there is reported as a fault rather than read as
-    # an answer about the gene; see ``impact_explanations``.
-    impact_explanations_dir: Path = (
-        Path(__file__).resolve().parents[1] / "pipeline" / "data" / "assets" / "impact_explanations"
-    )
-
     # The Supabase project, as the REST origin rather than the database host:
     # https://<ref>.supabase.co. Track blobs are served to clients from its
     # public storage endpoint, which they fetch directly -- this service builds

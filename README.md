@@ -78,6 +78,10 @@ which Render cannot reach. The URI needs `?sslmode=require`.
 DATABASE_URL=postgresql://postgres.<ref>:<password>@aws-<n>-<region>.pooler.supabase.com:5432/postgres?sslmode=require
 ```
 
+On Render the URL names the service's own role, `helixpeek_api.<ref>` (migration
+0017), which `scripts/api_role.py` gives a password and writes the URL for; the
+resolver and the scripts use `postgres`.
+
 Port 5432 is the session pooler, which is what a long-lived server with its own
 client-side pool wants. Port 6543 is the transaction pooler, for serverless
 callers; it disallows prepared statements, so it needs psycopg configured for

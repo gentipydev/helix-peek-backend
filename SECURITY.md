@@ -17,7 +17,8 @@ this repository). Please don't open a public issue for it.
 
 | Secret | Lives in | Never in |
 |---|---|---|
-| `DATABASE_URL` (Supabase pooler, with the `postgres` password) | Render's environment; Modal secret `helix-peak-resolver`; the dev Mac's `.env` (mode 600) | git, logs (the worker scrubs it from its lines), `/health/db` (class name only) |
+| `DATABASE_URL` as `helixpeek_api` (0017: the service's own role, which may do what `app/` does and no more) | Render's environment | git, logs, `/health/db` (class name only) |
+| `DATABASE_URL` as `postgres` (Supabase pooler, with the `postgres` password) | Modal secret `helix-peek-resolver`; the dev Mac's `.env` (mode 600) | Render (once its DATABASE_URL is the role's, set 2026-11-20), git, logs (the worker scrubs it from its lines) |
 | `SUPABASE_SERVICE_KEY` (`sb_secret_…`, bypasses RLS) | Modal secret; the dev Mac's `.env` | Render (the service never needs it), git, the app |
 | `ALPHAGENOME_API_KEY` | Modal secret (handed to the AVI bake alone); `.env`, `~/.env` | git, every other process |
 | `MODAL_KEY` / `MODAL_SECRET` (proxy token `render-wake`) | Render's environment | git; it can call the wake endpoint, which starts a sweep, and nothing else |
@@ -69,9 +70,12 @@ scoring asked again was not counted at all. Both are now one row each, written u
 advisory lock, so two asks at once cannot both take the day's last build.
 
 A client is the address it asks from: `CF-Connecting-IP`, else the first entry of
-`X-Forwarded-For`, else the socket. A script can claim other addresses, so the
-per-client limit is a courtesy. The service-wide limit and every cap in the database hold
-whatever a request claims.
+`X-Forwarded-For`, else the socket. Through Render, Cloudflare sets `CF-Connecting-IP`,
+and a request that sends one of its own is refused at the edge (403, Cloudflare's error
+1000) before the service sees it: probed on 2026-11-20 with 300 requests each claiming
+another address, all refused, while 300 from one address were held to 240 a minute. So
+the per-client limit holds per real address. Many real addresses at once are what the
+service-wide limit, the day's bytes and the caps in the database are for.
 
 Every answer carries `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY` and
 `Referrer-Policy: no-referrer`. CORS allows any origin, without credentials: there are no
@@ -136,10 +140,20 @@ each cap is. `modal billing summary` is Modal's own bill.
 
 ## The database (Supabase)
 
-- Row level security is on for every table in `public`, with no policies, and Supabase's
-  `anon` and `authenticated` roles hold no privilege there, for future tables either
-  (migration 0016). Nothing reads the tables through Supabase's Data API: the service and
-  the resolver use `DATABASE_URL`, and the app reads storage's public URLs alone.
+- Row level security is on for every table in `public`, and Supabase's `anon` and
+  `authenticated` roles hold no privilege there, for future tables either (migration
+  0016). Nothing reads the tables through Supabase's Data API: the service and the
+  resolver use `DATABASE_URL`, and the app reads storage's public URLs alone.
+- The service reaches its rows as `helixpeek_api` (migration 0017), never as `postgres`.
+  The role does not bypass row level security; its grants and its own policies let it
+  read what the routes read, queue, stop and forget asks, count an ask or a resume in
+  the ledger, queue, stop and keep a protein's ESM-2 scoring, and delete a protein built
+  on demand. It cannot delete or change a curated protein, write or change a paid call's
+  ledger row, touch any other bake, or make, alter or drop anything; each of those is a
+  test (`pipeline/resolver/test_worker_pg.py`), where every service SQL path runs as the
+  role. Its statements stop at 10 s. `scripts/api_role.py` sets its password (a SCRAM
+  verifier made locally) and writes the URL Render takes; the resolver and the scripts
+  keep `postgres`.
 - The storage buckets `tracks` and `models` are public to read, by design: they hold the
   tracks the app draws. Only the service key can write to them, and only the resolver and
   the upload scripts hold it.
@@ -192,10 +206,6 @@ Rotating a credential, if one ever leaks:
   Past it, Supabase restricts the project until the quota refills; on the Free plan it
   never bills. The app caches every track by sha256, so its own readers download each
   once. If this ever matters, the buckets can move behind a host with no egress fees.
-- **The per-client minute** is keyed on `CF-Connecting-IP`, which Render's Cloudflare
-  edge sets. Whether it also overwrites one a client sends is checked by sending a run of
-  requests that each claim another address (2026-11-20; see the review's notes). Either
-  way the service's minute, the day's bytes and every cap in the database hold.
 - **One person can take a day's 20 builds**, with a new install id for each 5. Testers
   then wait a day to build; nothing costs more.
 - **`/health/db`** names the Postgres version. It is managed Postgres, and the keep-alive

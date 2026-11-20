@@ -17,11 +17,12 @@
 
 There are no accounts, so a client is the address it asks from: Cloudflare's
 `CF-Connecting-IP` where it is there, else the first address in
-`X-Forwarded-For` (which Render's proxy sets), else the socket's peer. A client
-can name another address in those headers, so a client's own limit is a
-courtesy that a script can step round; the service's limit holds whatever is
-claimed, and what costs money is capped in the database (`resolves.py`,
-`budget.py`), not here. The counts are this process's, kept for a minute,
+`X-Forwarded-For`, else the socket's peer. Through Render, Cloudflare sets the
+first and refuses a request that sends its own (403, its error 1000; probed
+2026-11-20), so a client's limit holds per real address; the other two are for
+a service run without it. Many addresses at once are what the service's limit
+and the day's bytes are for, and what costs money is capped in the database
+(`resolves.py`, `budget.py`), not here. The counts are this process's, kept for a minute,
 and the day's bytes for the day: a restart starts both again.
 
 And every answer says, as an API's should, not to sniff its type or frame it.

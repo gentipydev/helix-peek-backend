@@ -66,8 +66,10 @@ differs from storage. A mismatch means the refactor changed data. Stop; never up
   for Render bills outbound bandwidth past 5 GB a month); and every ask by `spend_ledger`
   (0015), which no discard deletes: 20 a day (`RESOLVES_PER_DAY`), 5 per install, 200 proteins held, and a whole build's worst case
   within Modal's budget (`budget.py`), which the resolver holds each paid call to as well.
-  It holds no service_role key; rows are reached through `DATABASE_URL` only, and
-  Supabase's `anon`/`authenticated` roles have no privilege in `public` (0016). It resolves nothing itself:
+  It holds no service_role key; rows are reached through `DATABASE_URL` only, as its own
+  role `helixpeek_api` (0017: grants and policies for what `app/` does and no more; no
+  curated row, no paid ledger row, no bake but the scoring), and Supabase's
+  `anon`/`authenticated` roles have no privilege in `public` (0016). It resolves nothing itself:
   a request is a row the resolver (`pipeline/resolver/`) works, on Modal, on the dev Mac, or on
   both. The service only wakes Modal's (`MODAL_WAKE_URL`, proxy auth); the Mac's asks the queue
   every minute. `/catalog/search`'s `candidates` stays empty.
@@ -139,7 +141,11 @@ Every change is a `migrations/000N_*.sql`, applied by hand once and in order:
 `.venv/bin/python scripts/apply_migration.py migrations/000N_x.sql` (or `psql -f`). Run from a
 web worker on every boot, multi-object DDL could half-apply, run concurrently with itself
 across workers, and fail where the only honest response is to keep serving.
-Each file is one transaction, additive, with RLS on and no policies.
+Each file is one transaction, additive, with RLS on. A table no route reads has no
+policies; a table or column a route reads or writes needs its grant and its policy for
+`helixpeek_api` in the same migration (0017 has the pattern), or the service, which
+runs as that role, cannot see it. `pipeline/resolver/test_worker_pg.py` runs every
+service SQL path as the role, so a missing one fails there.
 
 ## The web service must not import pipeline/
 

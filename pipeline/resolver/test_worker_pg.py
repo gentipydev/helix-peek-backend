@@ -51,6 +51,19 @@ from pipeline.resolver.test_worker import (  # noqa: E402
 
 MIGRATIONS = sorted((BACKEND / "migrations").glob("0*.sql"))
 
+# The role the service on Render reaches its rows as (0017): every pool the
+# service is given here logs in as it, so a route whose SQL the role may not
+# run fails here, where `postgres` would let it through. The test servers
+# trust every role (`POSTGRES_HOST_AUTH_METHOD=trust`), so it needs no password.
+SERVICE_ROLE = "helixpeek_api"
+
+
+def as_service(url: str) -> str:
+    """`url`, logged in as the service's own role."""
+    from psycopg.conninfo import conninfo_to_dict, make_conninfo
+
+    return make_conninfo(**{**conninfo_to_dict(url), "user": SERVICE_ROLE})
+
 
 @pytest.fixture(scope="module")
 def database_url():
@@ -162,7 +175,7 @@ def test_the_service_serves_what_the_resolver_wrote(conn, offline, database_url,
     _ask(conn)
     assert worker.resolve_next(
         conn, Storage(), fetch_entry=lambda accession: offline(_body()))["state"] == "done"
-    with ConnectionPool(database_url, kwargs={"autocommit": True}, open=True) as pool:
+    with ConnectionPool(as_service(database_url), kwargs={"autocommit": True}, open=True) as pool:
         monkeypatch.setattr(db, "pool", pool)
         client = TestClient(app)
 
@@ -234,7 +247,7 @@ def _service(database_url, monkeypatch):
 
     from app import db
 
-    pool = ConnectionPool(database_url, kwargs={"autocommit": True}, open=True)
+    pool = ConnectionPool(as_service(database_url), kwargs={"autocommit": True}, open=True)
     monkeypatch.setattr(db, "pool", pool)
     return pool
 
@@ -712,6 +725,109 @@ def test_a_sweep_resolves_and_says_what_waits_for_a_gpu(conn, offline):
     assert summary["constraint_queued"] == 1
 
 
+# ------------------------------------------------- the service's own role (0017)
+
+
+def _as_service(database_url):
+    import psycopg
+
+    return psycopg.connect(as_service(database_url))
+
+
+def test_the_services_pool_is_its_own_role(conn, database_url, monkeypatch):
+    pool = _service(database_url, monkeypatch)
+    try:
+        with pool.connection() as connection:
+            said = connection.execute("select current_user, current_setting('statement_timeout')")
+            assert said.fetchone() == (SERVICE_ROLE, "10s")
+    finally:
+        pool.close()
+
+
+def test_the_service_role_may_not_touch_a_curated_protein(conn, database_url):
+    import psycopg
+
+    conn.execute(
+        """
+        insert into protein (slug, gene, uniprot, accession, display, summary, residues, exons,
+            chains, bridges, regions, disulfides, provenance, resolver_version, catalog_order)
+        values ('insulin', 'INS', 'P01308', 'NG_007114', 'Insulin', 'Curated.', 110, 3, 3, 3,
+                '[]', '[]', '{}', 0, 0)
+        """)
+    with _as_service(database_url) as api:
+        # The policy holds whatever the statement says: no curated row goes.
+        assert api.execute("delete from protein where slug = 'insulin'").rowcount == 0
+        api.rollback()
+        # A lock is let through only where a discard could take it, and an
+        # update never.
+        assert api.execute(
+            "select slug from protein where slug = 'insulin' for update").fetchall() == []
+        api.rollback()
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+            api.execute("update protein set display = 'x' where slug = 'insulin'")
+        api.rollback()
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+            api.execute("truncate protein cascade")
+    assert _one(conn, "select display, catalog_order from protein where slug = 'insulin'") == \
+        ("Insulin", 0)
+
+
+def test_the_service_role_may_count_an_ask_and_no_more(conn, database_url):
+    import psycopg
+
+    with _as_service(database_url) as api:
+        api.execute("insert into spend_ledger (kind, gene, asker) values ('ask', 'INS', 'a')")
+        api.commit()
+        # A paid call's row is the resolver's alone, and no row can be changed
+        # or taken back: the caps and the budget read this table.
+        for sql in ("insert into spend_ledger (kind, usd) values ('score', 0.01)",
+                    "insert into spend_ledger (kind, usd) values ('ask', 0)"):
+            with pytest.raises(psycopg.errors.InsufficientPrivilege):
+                api.execute(sql)
+            api.rollback()
+        for sql in ("update spend_ledger set usd = 0", "delete from spend_ledger"):
+            with pytest.raises(psycopg.errors.InsufficientPrivilege):
+                api.execute(sql)
+            api.rollback()
+    assert _one(conn, "select count(*), min(kind) from spend_ledger") == (1, "ask")
+
+
+def test_the_service_role_may_touch_no_bake_but_the_scoring(conn, offline, database_url):
+    import psycopg
+
+    _ask(conn)
+    worker.resolve_next(conn, Storage(), fetch_entry=lambda accession: offline(_body()))
+    conn.execute("insert into bake_job (slug, kind) values ('ins', 'structure')")
+    with _as_service(database_url) as api:
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+            api.execute("insert into bake_job (slug, kind) values ('ins', 'impact')")
+        api.rollback()
+        assert api.execute(
+            "update bake_job set state = 'stopped' where kind = 'structure'").rowcount == 0
+        api.rollback()
+        assert api.execute(
+            "update protein_track set state = 'absent' where kind = 'record'").rowcount == 0
+        api.rollback()
+        assert api.execute(
+            "update bake_job set state = 'stopped' where kind = 'constraint'").rowcount == 1
+        api.rollback()
+
+
+def test_the_service_role_may_make_and_drop_nothing(conn, database_url):
+    import psycopg
+
+    with _as_service(database_url) as api:
+        for sql in ("create table public.anything (id int)",
+                    "drop table resolve_request",
+                    "alter table protein disable row level security",
+                    "select * from fold_generation",
+                    "create role someone"):
+            with pytest.raises((psycopg.errors.InsufficientPrivilege,
+                                psycopg.errors.WrongObjectType)):
+                api.execute(sql)
+            api.rollback()
+
+
 # ------------------------------------------------- the service's endpoints
 
 
@@ -726,7 +842,7 @@ def api(database_url, monkeypatch):
 
     woken = []
     monkeypatch.setattr(resolves, "wake", lambda: woken.append(True))
-    with ConnectionPool(database_url, kwargs={"autocommit": True}, open=True) as pool:
+    with ConnectionPool(as_service(database_url), kwargs={"autocommit": True}, open=True) as pool:
         monkeypatch.setattr(db, "pool", pool)
         client = TestClient(app)
         client.woken = woken
@@ -1161,7 +1277,7 @@ def test_the_service_serves_a_model_made_on_demand(conn, offline, database_url, 
     monkeypatch.setattr(settings, "supabase_url", "https://project.supabase.co")
     storage = Storage()
     _resolved_with_a_model_queued(conn, offline, storage)
-    with ConnectionPool(database_url, kwargs={"autocommit": True}, open=True) as pool:
+    with ConnectionPool(as_service(database_url), kwargs={"autocommit": True}, open=True) as pool:
         monkeypatch.setattr(db, "pool", pool)
         client = TestClient(app)
 

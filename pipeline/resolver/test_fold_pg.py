@@ -26,8 +26,8 @@ from pipeline.resolver import local_worker, store, worker  # noqa: E402
 from pipeline.resolver.resolve import target_of  # noqa: E402
 from pipeline.resolver.test_worker import a_fold, a_model, a_selection  # noqa: E402
 from pipeline.resolver.test_worker_pg import (  # noqa: E402,F401 -- fixtures, used by name
-    Storage, _builds, _constraint, _one, _resolved_with_a_model_queued, _service, conn,
-    database_url, pytestmark,
+    Storage, _builds, _constraint, _one, _resolved_with_a_model_queued, _service, as_service,
+    conn, database_url, pytestmark,
 )
 
 POLICY = worker.pdb_policy.POLICY_VERSION
@@ -119,7 +119,7 @@ def test_an_experimental_fold_is_published_with_its_animation_whole(
     assert (regions, policy, selection) == (store.regions_of(conn, "ins"), POLICY, 1)
 
     monkeypatch.setattr(settings, "supabase_url", "https://project.supabase.co")
-    with ConnectionPool(database_url, kwargs={"autocommit": True}, open=True) as pool:
+    with ConnectionPool(as_service(database_url), kwargs={"autocommit": True}, open=True) as pool:
         monkeypatch.setattr(db, "pool", pool)
         client = TestClient(app)
         tracks = client.get("/protein/ins/tracks").json()

@@ -7,7 +7,13 @@
 - How often: each client `REQUESTS_PER_MINUTE` requests a minute, of which
   `POSTS_PER_MINUTE` may be POSTs, and the whole service
   `SERVICE_REQUESTS_PER_MINUTE`. Past one, a 429 with `Retry-After`. The
-  health checks are never counted: the keep-alive pings them.
+  health checks count against their client's minute, never the service's, so
+  a flood elsewhere never fails the keep-alive, which pings them.
+- How much: every answer's bytes, body and headers, refusals included, are
+  counted for the UTC day, and past `RESPONSE_BYTES_PER_DAY` every route but
+  the health checks is a 503 until midnight UTC. Render bills outbound bytes
+  past the month's allowance (or suspends the service, with no card), and no
+  minute limit bounds what many addresses at once can draw; this does.
 
 There are no accounts, so a client is the address it asks from: Cloudflare's
 `CF-Connecting-IP` where it is there, else the first address in
@@ -15,20 +21,27 @@ There are no accounts, so a client is the address it asks from: Cloudflare's
 can name another address in those headers, so a client's own limit is a
 courtesy that a script can step round; the service's limit holds whatever is
 claimed, and what costs money is capped in the database (`resolves.py`,
-`budget.py`), not here. The counts are this process's, kept for a minute.
+`budget.py`), not here. The counts are this process's, kept for a minute,
+and the day's bytes for the day: a restart starts both again.
 
 And every answer says, as an API's should, not to sniff its type or frame it.
 """
 
 import json
+import logging
 import threading
 import time
-from typing import Dict, Optional
+from typing import Callable, Dict, Optional
 
 from .config import settings
 
-# Never counted: the keep-alive pings both (`.github/workflows/keepalive.yml`).
+logger = logging.getLogger(__name__)
+
+# The keep-alive pings both (`.github/workflows/keepalive.yml`): never held to
+# the service's minute or the day's bytes, only to their client's minute.
 EXEMPT = frozenset(("/health", "/health/db"))
+
+DAY_SECONDS = 86_400
 
 _HEADERS = (
     (b"x-content-type-options", b"nosniff"),
@@ -77,15 +90,75 @@ class Minute:
             self._minute = None
 
 
+class Day:
+    """Bytes sent in the current UTC day (days since the epoch, by `clock`)."""
+
+    def __init__(self, clock: Callable[[], float] = time.time):
+        self._lock = threading.Lock()
+        self._clock = clock
+        self._day: Optional[int] = None
+        self._sent = 0
+        self._said = False
+
+    def _roll(self) -> None:
+        today = int(self._clock() // DAY_SECONDS)
+        if today != self._day:
+            self._day = today
+            self._sent = 0
+            self._said = False
+
+    def add(self, count: int) -> None:
+        with self._lock:
+            self._roll()
+            self._sent += count
+
+    def sent(self) -> int:
+        with self._lock:
+            self._roll()
+            return self._sent
+
+    def first_refusal(self) -> bool:
+        """Whether this is the day's first refusal, which is logged."""
+        with self._lock:
+            self._roll()
+            said, self._said = self._said, True
+            return not said
+
+    def seconds_left(self) -> int:
+        """Seconds to the next UTC midnight, at least one."""
+        return max(1, DAY_SECONDS - int(self._clock()) % DAY_SECONDS)
+
+    def clear(self) -> None:
+        with self._lock:
+            self._day = None
+            self._sent = 0
+            self._said = False
+
+
 clients = Minute()
 posts = Minute()
 service = Minute()
+day = Day()
 
 
 def reset() -> None:
     """Forget every count (for tests)."""
-    for window in (clients, posts, service):
+    for window in (clients, posts, service, day):
         window.clear()
+
+
+# What the server and the edge add to every answer after the app has sent its
+# own headers: uvicorn's `date` and `server`, Render's `rndr-id` and
+# `x-render-origin-server`, Cloudflare's `cf-ray`, `cf-cache-status`, `alt-svc`.
+# Measured 2026-11-20: a `/health` answer carried 375 bytes of headers, about
+# 150 of them the app's.
+EDGE_BYTES = 250
+
+
+def _header_bytes(message) -> int:
+    """About what a response's status line and headers take on the wire."""
+    return EDGE_BYTES + 17 + 2 + sum(len(key) + len(value) + 4
+                                     for key, value in message.get("headers") or ())
 
 
 def _header(scope, name: bytes) -> Optional[str]:
@@ -130,19 +203,38 @@ class Guard:
             await self.app(scope, receive, send)
             return
 
-        if scope.get("path") not in EXEMPT:
-            who = client_of(scope)
-            busy = None
-            if not service.take("*", settings.service_requests_per_minute):
-                busy = "The service is answering as many requests as it can. Ask again in a minute."
-            elif not clients.take(who, settings.requests_per_minute):
-                busy = "Too many requests from one place. Ask again in a minute."
-            elif (scope.get("method") in _WITH_BODY
-                  and not posts.take(who, settings.posts_per_minute)):
-                busy = "Too many requests from one place. Ask again in a minute."
-            if busy is not None:
-                await _refuse(send, 429, busy, retry_after=60)
-                return
+        # Every byte the service sends counts against the day, refusals too.
+        async def counted(message):
+            if message["type"] == "http.response.start":
+                day.add(_header_bytes(message))
+            elif message["type"] == "http.response.body":
+                day.add(len(message.get("body", b"")))
+            await send(message)
+
+        health = scope.get("path") in EXEMPT
+        who = client_of(scope)
+        busy = None
+        if not health and not service.take("*", settings.service_requests_per_minute):
+            busy = "The service is answering as many requests as it can. Ask again in a minute."
+        elif not clients.take(who, settings.requests_per_minute):
+            busy = "Too many requests from one place. Ask again in a minute."
+        elif (scope.get("method") in _WITH_BODY
+              and not posts.take(who, settings.posts_per_minute)):
+            busy = "Too many requests from one place. Ask again in a minute."
+        if busy is not None:
+            await _refuse(counted, 429, busy, retry_after=60)
+            return
+
+        allowed = settings.response_bytes_per_day
+        if not health and allowed and day.sent() >= allowed:
+            if day.first_refusal():
+                logger.warning("Sent %d bytes today, past RESPONSE_BYTES_PER_DAY (%d): every "
+                               "route but the health checks is a 503 until midnight UTC",
+                               day.sent(), allowed)
+            await _refuse(counted, 503,
+                          "The service has sent all it may today. Ask again after midnight UTC.",
+                          retry_after=day.seconds_left())
+            return
 
         if scope.get("method") in _WITH_BODY:
             limit = settings.max_body_bytes
@@ -151,10 +243,11 @@ class Guard:
                 try:
                     too_long = int(declared) > limit
                 except ValueError:
-                    await _refuse(send, 400, "Content-Length is not a number.")
+                    await _refuse(counted, 400, "Content-Length is not a number.")
                     return
                 if too_long:
-                    await _refuse(send, 413, "The request body is larger than this service reads.")
+                    await _refuse(counted, 413,
+                                  "The request body is larger than this service reads.")
                     return
             # Read whole, and never past the limit, whatever the header said
             # (or where none did); the route is handed it as it came.
@@ -166,7 +259,8 @@ class Guard:
                     return
                 body += message.get("body", b"")
                 if len(body) > limit:
-                    await _refuse(send, 413, "The request body is larger than this service reads.")
+                    await _refuse(counted, 413,
+                                  "The request body is larger than this service reads.")
                     return
                 more = message.get("more_body", False)
             replay = [{"type": "http.request", "body": body, "more_body": False}]
@@ -186,6 +280,6 @@ class Guard:
                 message = {**message, "headers": [
                     *(message.get("headers") or ()),
                     *(pair for pair in _HEADERS if pair[0] not in held)]}
-            await send(message)
+            await counted(message)
 
         await self.app(scope, downstream, send_with_headers)

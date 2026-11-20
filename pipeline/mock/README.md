@@ -1,7 +1,8 @@
 # Baking `assets/mock/gene_*.json`
 
 Twenty records, one per protein, each of them exactly what the backend's
-`GET /gene/{id}/{gene}` answers — because the parsing *is* the backend's:
+`GET /gene/{id}/{gene}` answered until that route was retired (2026-11-20) —
+because the parsing *is* the backend's:
 `build_gene_record.py` imports `app.genbank_parser.extract_gene` from this
 repo rather than reimplementing it. A record that parses through a different
 parser is a record that can drift from the contract it stands in for.

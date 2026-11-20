@@ -63,8 +63,7 @@ def storage(monkeypatch):
     monkeypatch.setattr(settings, "supabase_url", "https://ref.supabase.co")
 
 
-def test_a_run_is_named_where_storage_holds_it(client, pool, storage, efetch_raising):
-    efetch_raising(AssertionError("a training run never asks NCBI"))
+def test_a_run_is_named_where_storage_holds_it(client, pool, storage):
     pool(rows=[ROW])
     response = client.get("/peptide-lm/runs/curated")
     assert response.status_code == 200

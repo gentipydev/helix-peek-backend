@@ -96,3 +96,25 @@ def test_server_version_without_a_pool_is_an_error(database_url):
 
     with pytest.raises(RuntimeError):
         db.server_version()
+
+
+def test_one_answer_stands_for_a_while(client, database_url, monkeypatch):
+    """A flood of /health/db costs one round trip each `HEALTH_DB_SECONDS`."""
+    database_url("postgresql://example/db")
+    asked = []
+
+    def version():
+        asked.append(1)
+        return "PostgreSQL 17.6"
+
+    monkeypatch.setattr(db, "server_version", version)
+    now = [1000.0]
+    monkeypatch.setattr(main.time, "monotonic", lambda: now[0])
+
+    for _ in range(5):
+        assert client.get("/health/db").json() == {"database": "ok", "server": "PostgreSQL 17.6"}
+    assert len(asked) == 1
+
+    now[0] += main.HEALTH_DB_SECONDS + 1
+    assert client.get("/health/db").json()["database"] == "ok"
+    assert len(asked) == 2

@@ -1,23 +1,22 @@
-"""The read endpoints: the gene record, and the catalog that names it."""
+"""Every endpoint but the health checks: the catalog, its tracks, and builds on demand.
+
+The gene route (`/gene/{id}/{gene}`, a read-through of NCBI) was retired on
+2026-11-20: the app reads each gene record as a stored track, and the route was
+the largest answer the service could be made to send (a gene's whole genomic
+sequence), for anyone, as often as its limits allowed.
+"""
 
 import contextlib
-import re
 from typing import Optional
-from urllib.error import HTTPError, URLError
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Path, Query, Response
 
 from . import catalog, lm_runs, resolves, suggest, tracks
 from .catalog import CatalogUnavailable
 from .config import settings
-from .entrez_client import RecordTooLarge
-from .genbank_parser import GeneNotFound, extract_gene
-from .record_cache import NcbiBusy
-from .record_cache import fetch as fetch_genbank_record
 from .schemas import (
     BuiltResponse,
     CatalogPage,
-    GeneResponse,
     LmRun,
     ProteinDetail,
     ResolveRequest,
@@ -35,123 +34,16 @@ router = APIRouter()
 def _catalog_errors():
     """Report an unreadable catalog as unavailable, never as an empty one.
 
-    There is nothing to read through to here. `record_cache` can lose its
-    database and still answer from NCBI; the catalog has no second source, and
-    answering an unreadable catalog with an empty one would tell a client that
-    a protein does not exist when the truth is that nobody could look. The
-    client keeps its own copy, and that is what keeps search working meanwhile.
+    There is nothing to read through to here: the catalog has no second
+    source, and answering an unreadable catalog with an empty one would tell a
+    client that a protein does not exist when the truth is that nobody could
+    look. The client keeps its own copy, and that is what keeps search working
+    meanwhile.
     """
     try:
         yield
     except CatalogUnavailable as exc:
         raise HTTPException(status_code=503, detail=str(exc))
-
-
-def _upstream_message(exc: HTTPError) -> str:
-    """Best-effort read of the error body NCBI sent with an HTTPError."""
-    try:
-        body = exc.read()
-    except (OSError, ValueError, AttributeError):
-        return exc.reason or str(exc)
-    if isinstance(body, bytes):
-        body = body.decode("utf-8", errors="replace")
-    return body.strip() or (exc.reason or str(exc))
-
-
-def _no_record(id: str) -> str:
-    return "No GenBank record found for id {!r}.".format(id)
-
-
-@contextlib.contextmanager
-def _upstream_errors(id: str):
-    """Translate urllib failures from an Entrez call into HTTPExceptions.
-
-    A context manager rather than inline handling so the mapping is stated once
-    and stays reusable as endpoints are added. The clauses stay
-    most-specific-first because HTTPError subclasses URLError, which subclasses
-    OSError -- reordering them would silently swallow the specific cases.
-
-    Any upstream 400 is read as "not found": ``id`` is the only part of the
-    request that can be invalid.
-    """
-    try:
-        yield
-    except HTTPError as exc:
-        if exc.code == 400:
-            raise HTTPException(status_code=404, detail=_no_record(id))
-        raise HTTPException(
-            status_code=502,
-            detail="NCBI returned {}: {}".format(exc.code, _upstream_message(exc)),
-        )
-    except URLError as exc:
-        raise HTTPException(
-            status_code=502,
-            detail="Could not reach NCBI: {}".format(exc.reason),
-        )
-    except OSError as exc:
-        raise HTTPException(
-            status_code=502,
-            detail="Could not reach NCBI: {}".format(exc),
-        )
-
-
-# One nucleotide record as NCBI names it, optionally versioned: a RefSeq gene
-# region or transcript (NG_, NM_, NR_, XM_, XR_), or a GenBank accession. Never
-# a list (efetch reads commas as several ids), a range, or a RefSeq genome
-# record (NC_, NT_, NW_, AC_: a chromosome, contig or scaffold whole).
-_ACCESSION = re.compile(
-    r"(?:(?:NG|NM|NR|XM|XR)_[0-9]{6,9}|[A-Z]{1,2}[0-9]{5,8})(?:\.[0-9]{1,3})?")
-
-
-@router.get("/gene/{id}/{gene}", response_model=GeneResponse)
-def read_gene(
-    id: str = Path(max_length=32),
-    gene: str = Path(max_length=64),
-) -> dict:
-    """Fetch one GenBank record and return just ``gene`` from it, structured.
-
-    Deliberately a sync ``def``: ``Entrez.efetch`` is blocking urllib, so
-    FastAPI runs this in a threadpool. Making it ``async def`` would block the
-    event loop for the whole round trip to NCBI.
-
-    ``id`` and ``gene`` are both free parameters: the record to read and the
-    gene to keep are the client's choice, not this service's, within bounds:
-    ``id`` must name one record of a gene's size (`_ACCESSION`), anything else
-    is a 404 that never reaches NCBI, a record over ``MAX_RECORD_BYTES`` is a
-    422, and past this hour's NCBI reads a miss is a 429.
-
-    The fetch is cache-aware. A cache miss, or no database at all, reads
-    through to NCBI exactly as before.
-    """
-    if not _ACCESSION.fullmatch(id):
-        raise HTTPException(status_code=404, detail=_no_record(id))
-    with _upstream_errors(id):
-        try:
-            record = fetch_genbank_record(id)
-        except ValueError:
-            # Not a GenBank record at all -- NCBI answers an unusable id with
-            # plain text and an HTTP 200.
-            raise HTTPException(status_code=404, detail=_no_record(id))
-        except RecordTooLarge as exc:
-            raise HTTPException(
-                status_code=422,
-                detail="Record {!r} is longer than this service reads ({:,} characters)."
-                       .format(id, exc.limit),
-            )
-        except NcbiBusy:
-            raise HTTPException(
-                status_code=429,
-                detail="This service reads NCBI {:,} times an hour at most, and this hour's "
-                       "are taken. Ask again later.".format(settings.gene_fetches_per_hour),
-            )
-
-    try:
-        return extract_gene(record, gene)
-    except GeneNotFound:
-        raise HTTPException(
-            status_code=404,
-            detail="No gene {!r} in record {!r}.".format(gene, id),
-        )
 
 
 @router.get("/catalog", response_model=CatalogPage)

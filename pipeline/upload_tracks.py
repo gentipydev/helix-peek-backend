@@ -23,7 +23,7 @@ with the content -- which is what makes `cache-control: immutable` true rather
 than merely convenient. A rebake writes a new object and the superseded one is
 deleted once its row no longer points at it.
 
-**Validated before it is written**, the same order `record_cache` uses: a
+**Validated before it is written**, the order the service's gene cache kept: a
 payload that would fail on the way out never becomes a row that says `ready`.
 A target refused for that is said and makes the run exit 1, after the others.
 

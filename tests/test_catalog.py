@@ -2,9 +2,8 @@
 
 No database is involved. A fake pool stands in for psycopg so the policy --
 what a page returns, how a search ranks, what an unreadable catalog reports,
-and how a track becomes a URL -- is testable without a socket, the same trade
-`test_record_cache.py` makes. The SQL itself is exercised against the real
-database by running the service.
+and how a track becomes a URL -- is testable without a socket. The SQL itself
+is exercised against the real database by running the service.
 """
 
 import pytest
@@ -122,13 +121,6 @@ def test_no_database_reports_unavailable_not_an_empty_catalog(client, no_pool):
 def test_a_broken_database_reports_unavailable(client, fake_pool):
     fake_pool(failing=True)
     assert client.get("/catalog").status_code == 503
-
-
-def test_the_gene_route_is_unaffected_by_the_catalog(client, no_pool, genbank_text,
-                                                     efetch_returning):
-    """`/gene` keeps answering with no database, exactly as it did before."""
-    efetch_returning(genbank_text)
-    assert client.get("/gene/NG_007114/INS").status_code == 200
 
 
 # --- pages ------------------------------------------------------------------

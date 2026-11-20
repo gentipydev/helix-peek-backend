@@ -1,89 +1,73 @@
 # helix-peek-backend
 
-A minimal FastAPI service that fetches a GenBank record from NCBI and returns one
-gene lifted out of it. It exists so the Helix Peek Flutter app has a real backend
-to talk to.
+The FastAPI service behind the Helix Peek Flutter app: the protein catalog, each
+protein's track index (every track a public Supabase storage URL the app fetches
+directly), suggestions from every reviewed human protein, and builds on demand.
+`pipeline/` holds the offline bake tools and the resolver that builds a protein.
 
-The endpoint wraps a single Biopython call:
-
-```python
-Entrez.efetch(db="nucleotide", id=id, rettype="gb", retmode="text")
-```
-
-`db`, `rettype` and `retmode` are hardcoded; `id` is the only input to it.
-
-## The endpoint
+## The endpoints
 
 ```
-GET /gene/{id}/{gene}    one gene from a GenBank record, structured
+GET  /catalog                          the curated proteins, in catalog_order
+GET  /catalog/search?q=                the curated proteins a query names
+GET  /protein/{slug}                   one protein's row
+GET  /protein/{slug}/tracks            its tracks: state, storage URL, sha256, provenance
+GET  /proteins/suggest?q=              every reviewed human protein, as one types
+GET  /proteins/built                   the proteins built on demand, newest first
+POST /proteins/resolve                 ask for a protein to be built
+GET  /proteins/resolve/{gene}          how far its build has got
+POST /proteins/resolve/{gene}/stop     stop it (the install that asked)
+POST /proteins/resolve/{gene}/keep     keep a stopped build as it is
+POST /proteins/resolve/{gene}/discard  delete everything built for a stopped build
+POST /proteins/stopped                 one install's stopped builds still to decide
+GET  /peptide-lm/runs/{name}           the peptide model's recorded run
+GET  /health                           the service is up
+GET  /health/db                        the database answers (cached 30 s)
 ```
 
-### `GET /gene/{id}/{gene}`
+There is no `/docs`, `/redoc` or `/openapi.json`.
 
-Parses the FEATURES table and returns just the requested gene: its span, sequence,
-exons, transcript, protein, and peptides. Coordinates are **1-based inclusive**,
-matching what NCBI shows for the record rather than Biopython's 0-based half-open
-internals. `join(...)` locations keep their parts in `segments`, so introns are not
-silently spliced out.
+### The gene record, and the route it came from
 
-The payload is only what the app draws. A length a client can compute from what is
-already here — a span's `end - start + 1`, a translation's length — is not sent, so
-there is never a second copy of a number to disagree with the first.
+Until 2026-11-20 the service also had `GET /gene/{id}/{gene}`, which read one
+GenBank record from NCBI (through a cache) and returned one gene lifted out of
+it. The app stopped calling it when each protein's record became a stored track
+(`record`), and the route was retired: it read NCBI for anyone who asked, and its
+answer, a gene's whole genomic sequence, was the largest thing the service could
+be made to send (`SECURITY.md`).
 
-```console
-$ curl localhost:8000/gene/NG_007114/INS
-{
-  "gene": "INS",
-  "location": {"start": 4986, "end": 6416, "strand": 1},
-  "sequence": "AGCCCTCCAGGACAGGCTGCATCAGAAGAGG...",
-  "transcript": {"segments": [{"start": 4986, "end": 5027}, ...]},
-  "protein": {
-    "product": "insulin preproprotein",
-    "translation": "MALWMRLLPLLALLALWGPDPAAAFVNQHLCGSHLVEALYLVCGERGFFYTPKT...",
-    "segments": [{"start": 5224, "end": 5410}, {"start": 6198, "end": 6343}]
-  },
-  "exons": [{"number": 1, "start": 4986, "end": 5027}, ...],
-  "signal_peptide": {"product": null, "segments": [...], "translation": "MALWMRLLPLLALLALWGPDPAAA"},
-  "proprotein": {"product": "proinsulin", "segments": [...], "translation": "FVNQHLCGSHLVEA..."},
-  "peptides": [
-    {"product": "insulin B chain", "segments": [...], "translation": "FVNQHLCGSHLVEALYLVCGERGFFYTPKT"},
-    ...
-  ]
-}
-```
-
-Both `id` and `gene` are free parameters: which record to read and which gene to
-keep are the client's choice. The Flutter app defaults to `NG_007114` / `INS`.
+The record's format is unchanged. `pipeline/mock/build_gene_record.py` (and the
+resolver, for a protein built on demand) makes it with `app/genbank_parser.py`'s
+`extract_gene`: the gene's span, sequence, exons, transcript, protein and
+peptides, **1-based inclusive**, as NCBI shows the record, with `join(...)`
+locations kept in `segments` so introns are not silently spliced out.
 
 #### Why the gene filter is an exact match
 
 `NG_007114` is a RefSeqGene *region*, not a single gene. It carries three: `TH`
 (1..2266), `INS` (4986..6416) and the `INS-IGF2` readthrough (4986..>8416). `INS`
 and `INS-IGF2` **start at the same base and share a signal peptide**, so no
-coordinate window separates them — `efetch` with `seq_start=4986&seq_stop=6416`
+coordinate window separates them -- `efetch` with `seq_start=4986&seq_stop=6416`
 still returns five `INS-IGF2` features. Selection is therefore an exact comparison
 against the `/gene` qualifier; `"INS-IGF2".startswith("INS")` is why a prefix or
 substring test would be wrong.
 
-There is also `GET /health` → `{"status": "ok"}`, which checks the service is up
-without spending an NCBI request.
-
 ## Setup
 
 `NCBI_EMAIL` is required. NCBI rejects and eventually blocks traffic with no
-contact address, so the app refuses to start without it rather than failing at
-request time.
+contact address, and the scripts and the resolver that share these settings read
+NCBI, so the settings refuse to load without it rather than failing later.
 
 ```bash
 cp .env.example .env
 # edit .env and set NCBI_EMAIL to a real address
 ```
 
-### The cache database
+### The database
 
-`DATABASE_URL` is optional. Unset, the service reads through to NCBI for every
-request; the pool is simply never created. It is opened in the app lifespan
-rather than at import, so a wrong or unreachable database is reported on
+`DATABASE_URL` is optional. Unset, the pool is never created and every route
+that reads the database answers 503. It is opened in the app lifespan rather
+than at import, so a wrong or unreachable database is reported on
 `GET /health/db` instead of killing the worker before it can say why.
 
 On Supabase, take the **connection pooler** URI (Project Settings → Database),
@@ -100,32 +84,13 @@ callers; it disallows prepared statements, so it needs psycopg configured for
 that before it will work here.
 
 `GET /health/db` returns `unconfigured`, `ok` with the server version, or
-`error` with just the exception class. The endpoint is public and psycopg names
-the host, port and user in its connection errors, so the full message goes to
-the log instead of the response body.
+`error` with just the exception class, and one answer stands for 30 seconds, so
+a flood of it costs one round trip in that time. The endpoint is public and
+psycopg names the host, port and user in its connection errors, so the full
+message goes to the log instead of the response body.
 
-#### What is cached
-
-Whole GenBank records, keyed by accession -- not by `(accession, gene)`. The
-expensive step is the NCBI round trip for a record; `extract_gene` is pure and
-costs ~0.1 ms, so one cached row serves every gene in it.
-
-What is stored is the text NCBI returned, not a parsed payload. Reparsing takes
-~2 ms against a 0.5-3 s fetch, and raw text keeps the cache independent of both
-the parser and the response schema: a fix to `genbank_parser` changes what
-clients see on the next request without invalidating a thing.
-
-The table is created at startup (`create table if not exists`) -- one table, no
-history to migrate, and a deploy that cannot half-apply.
-
-`CACHE_TTL_DAYS` defaults to 30. A record for a given accession is effectively
-immutable, so the TTL is about picking up NCBI's own corrections rather than
-about staleness.
-
-Every cache operation is best-effort. A database that is missing, asleep or
-broken is logged and read through to NCBI, so it costs latency and nothing
-else. Nothing unparseable is ever written: NCBI answers a bad id with plain
-text and HTTP 200, and the parse happens before the write.
+The `genbank_record` table the retired gene route cached records in stays in the
+database, unused: a migration here only ever adds.
 
 ### Run locally
 
@@ -152,38 +117,10 @@ docker compose up --build
 .venv/bin/pytest
 ```
 
-Every test patches `Entrez.efetch` against a saved fixture
-(`tests/fixtures/ng_007114.gb`, a real NCBI response), so the default run makes no
-network call. The parser tests skip HTTP entirely — `extract_gene` takes an
-already-parsed record and does no I/O.
-
-## Error handling
-
-NCBI never signals "no such record" with an empty body, and it does not use HTTP
-status codes consistently. Both real failure shapes are mapped to `404`:
-
-| `id` | What NCBI actually returns | We return |
-|---|---|---|
-| `NG_007114` | `200`, the GenBank record | `200` |
-| `NOT_A_REAL_ID_XYZ` (unparseable) | **`200`**, body `Error: F a i l e d  t o  u n d e r s t a n d  i d : ...` | `404` |
-| `NG_999999` (well-formed, unknown) | **`400`**, `Error: ... F a i l e d  t o  r e t r i e v e  s e q u e n c e : ...` | `404` |
-| — | connection refused, DNS failure, timeout | `502`, upstream message in `detail` |
-| — | any other upstream status (5xx) | `502`, upstream message in `detail` |
-
-(The spaced-out letters are literal. NCBI really sends `F a i l e d`.)
-
-There is one more 404: the record parsed, but no feature in it carries that gene
-name.
-
-A valid response is recognised *positively* — `SeqIO.read` raises `ValueError` on
-a body that is not a GenBank record. Checking for an empty body instead would pass
-NCBI's error text straight through to the client as a `200`. Any upstream `400` is
-treated as "not found" because `id` is the only part of the request that can be
-invalid.
-
-Requests time out after `NCBI_TIMEOUT_SECONDS` (default 20). `Entrez.efetch` takes
-no timeout argument and urllib has no default, so this is enforced with
-`socket.setdefaulttimeout` at startup.
+No test reaches the network. The database is a fake pool that answers by SQL
+shape, except the opt-in SQL tests, which run against a local Postgres
+(`RESOLVER_TEST_DATABASE_URL`). The parser tests read a saved NCBI response
+(`tests/fixtures/ng_007114.gb`).
 
 ## Suggestions: every reviewed human protein
 
@@ -254,9 +191,11 @@ worker is not woken: it asks the queue every minute.
 (`MAX_BODY_BYTES`) and to so many requests a minute: 240 a client
 (`REQUESTS_PER_MINUTE`), 30 of them POSTs (`POSTS_PER_MINUTE`), 3,000 for the
 whole service (`SERVICE_REQUESTS_PER_MINUTE`); past one, a 429 with `Retry-After`.
-`/health` and `/health/db` are never counted. `/gene/{id}/{gene}` reads NCBI at
-most 60 times an hour (`GENE_FETCHES_PER_HOUR`), and Biopython still spaces its
-calls ~0.37 s apart. `SECURITY.md` has every limit and why.
+`/health` and `/health/db` count against their client's minute and never the
+service's. Every answer's bytes are counted for the UTC day, and past 150 MB
+(`RESPONSE_BYTES_PER_DAY`) every route but the health checks is a 503 until
+midnight UTC, which keeps a month inside Render's 5 GB of outbound bandwidth.
+`SECURITY.md` has every limit and why.
 
 ## CORS
 
@@ -266,9 +205,8 @@ accounts, so a page elsewhere can read only what anyone can, and
 
 ## Deliberately not built
 
-Auth is not here yet, and neither is `/summary`. Parsing covers one gene per
-request — there is no endpoint that returns every gene in a record, because no
-client needs one yet.
+Auth is not here: there are no accounts, and what an ask may cost is capped
+instead (`SECURITY.md`).
 
 ## CI and deploys
 
@@ -285,20 +223,18 @@ client needs one yet.
 
 ```
 app/
-  main.py             FastAPI app: Entrez.email, socket timeout, guard, CORS,
-                      router, pool lifespan, /health and /health/db
-  guard.py            body size and requests a minute, before every route
+  main.py             FastAPI app: guard, CORS, router, pool lifespan, /health and
+                      /health/db
+  guard.py            body size, requests a minute and bytes a day, before every route
   budget.py           Modal's budget for builds on demand, read by both sides
   config.py           pydantic-settings; NCBI_EMAIL required, DATABASE_URL optional
-  db.py               the psycopg connection pool; sync, to match the read path
-  entrez_client.py    the Entrez.efetch wrapper; fetch and parse kept separate
-  record_cache.py     read-through cache of whole records, keyed by accession
-  genbank_parser.py   extract_gene(record, gene) -- pure, no I/O
+  db.py               the psycopg connection pool; sync, to match the routes
+  genbank_parser.py   extract_gene(record, gene) -- pure, no I/O; the record builder's
   protein_index.py    how index rows and search terms are made, and normalize()
   suggest.py          /proteins/suggest: ranked prefix tiers, near misses last
   resolves.py         /proteins/resolve: what an ask means, the request row, the wake
   schemas.py          pydantic response models
-  router.py           the endpoints and the 404/502/503 mapping
+  router.py           the endpoints and the 404/429/503 mapping
 migrations/           applied by hand, in order
 pipeline/             the bake tools, moved from helix-peek/tool/ in Phase 3; see
                       pipeline/README.md. Nothing under app/ imports it yet
@@ -318,17 +254,15 @@ scripts/
   check_built.py          a built protein against the service, storage, its rows and UniProt
   dry_resolve.py          what the resolver would build for a gene, writing nothing
 tests/
-  test_gene.py            /gene against a mocked Entrez.efetch
-  test_health.py          the liveness check
+  test_health.py          the liveness check; no API maps; the gene route retired
+  test_guard.py           body size, requests a minute, bytes a day
   test_genbank_parser.py  the extractor, straight off the fixture
   test_config.py          startup fails without NCBI_EMAIL
   test_health_db.py       the readiness contract, without opening a socket
-  test_record_cache.py    hit, miss, eviction and degradation, against a fake pool
   test_protein_index.py   normalising, MANE and RefSeqGene parsing, rows and terms
   test_suggest.py         statuses, the short and near-miss rules, against a fake pool
   test_resolve_api.py     /proteins/resolve's states, cap and wake, against a fake pool
   test_pipeline.py        the pipeline imports, the curated rows, check_against's comparisons
-  conftest.py             shared fixtures, incl. the efetch patches
-  ncbi_errors.py          real NCBI failure bodies
+  conftest.py             shared fixtures
   fixtures/ng_007114.gb
 ```

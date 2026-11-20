@@ -1,8 +1,8 @@
 # helix-peak-backend
 
-FastAPI service behind the Helix Peek Flutter app. It lifts one gene out of an NCBI
-GenBank record, serves the protein catalog and each protein's track index from Supabase,
-and suggests from every reviewed human protein. `pipeline/` holds the offline bake tools.
+FastAPI service behind the Helix Peek Flutter app. It serves the protein catalog and each
+protein's track index from Supabase, suggests from every reviewed human protein, and takes
+asks for proteins built on demand. `pipeline/` holds the offline bake tools and the resolver.
 
 ## THE CONTRACT — read before changing anything
 
@@ -43,48 +43,55 @@ differs from storage. A mismatch means the refactor changed data. Stop; never up
 
 ## What the service is, and is not
 
-- Is: `/gene/{id}/{gene}` (read-through cache of whole records), `/catalog`, `/catalog/search`,
+- Is: `/catalog`, `/catalog/search`,
   `/protein/{slug}`, `/protein/{slug}/tracks`, `/proteins/suggest`, `/proteins/built`, `/proteins/resolve` (POST,
   GET `/{gene}`, and POST `/{gene}/stop`, `/{gene}/keep`, `/{gene}/discard`), `/proteins/stopped`
   (POST: one install's stopped builds still to decide), `/peptide-lm/runs/{name}`,
   `/health`, `/health/db`. (`.../impact-explanations`, the AVI contributions route, was removed
-  with the app's contributions page on 2026-11-15, at the user's word.)
-  It writes `genbank_record`, one `resolve_request` row per new ask, and a reader's decision on a
+  with the app's contributions page on 2026-11-15, at the user's word. `/gene/{id}/{gene}`,
+  a read-through of NCBI the app no longer called, was retired on 2026-11-20 in the security
+  review: it sent a gene's whole genomic sequence to anyone, the largest answer the service
+  had. No `/docs`, `/redoc` or `/openapi.json` either.)
+  It writes one `resolve_request` row per new ask, and a reader's decision on a
   build they stopped (0014): Keep is `kept_at` on the stopped bake; Discard deletes the protein's
   rows (never a curated one's) and every request for its gene at once, and writes a
   `discard_request` row for the resolver, which holds the storage key, to delete its objects
   (`pipeline/resolver/forget.py`, at the top of every sweep). It names bytes and never carries
   them: a ready track resolves to a public Supabase storage URL the client fetches directly.
 - Is not: authenticated (there is no auth) or CORS-restricted (`allow_origins=["*"]`, no
-  credentials). What it may cost is bounded instead (`SECURITY.md`, 2026-11-13): every
-  request by `guard.py` (a 16 KB body; per client and service-wide requests a minute, the
-  health checks exempt); `/gene` to one gene-sized accession, 8 MB read, 60 NCBI reads an hour
-  and a 64 MB cache; and every ask by `spend_ledger` (0015), which no discard deletes: 20 a
-  day (`RESOLVES_PER_DAY`), 5 per install, 200 proteins held, and a whole build's worst case
+  credentials). What it may cost is bounded instead (`SECURITY.md`, 2026-11-13 and
+  2026-11-20): every request by `guard.py` (a 16 KB body; per client and service-wide
+  requests a minute, the health checks held to their client's alone; and the bytes it sends
+  a UTC day, 150 MB, past which every route but the health checks is a 503 until midnight,
+  for Render bills outbound bandwidth past 5 GB a month); and every ask by `spend_ledger`
+  (0015), which no discard deletes: 20 a day (`RESOLVES_PER_DAY`), 5 per install, 200 proteins held, and a whole build's worst case
   within Modal's budget (`budget.py`), which the resolver holds each paid call to as well.
   It holds no service_role key; rows are reached through `DATABASE_URL` only, and
   Supabase's `anon`/`authenticated` roles have no privilege in `public` (0016). It resolves nothing itself:
   a request is a row the resolver (`pipeline/resolver/`) works, on Modal, on the dev Mac, or on
   both. The service only wakes Modal's (`MODAL_WAKE_URL`, proxy auth); the Mac's asks the queue
   every minute. `/catalog/search`'s `candidates` stays empty.
-- Only `NCBI_EMAIL` is required; with no `DATABASE_URL`, `/gene` still works and the catalog is 503.
+- Only `NCBI_EMAIL` is required (the scripts and the resolver that share `app.config` read NCBI;
+  the service itself no longer does); with no `DATABASE_URL`, every route that reads it is a 503.
 - `app/` stays Python 3.9-compatible (`Optional`/`List`, never `X | Y`); the image runs 3.12.
 
 ## app/ module map
 
-- `main.py`: wiring. Entrez email and tool, socket timeout, CORS, lifespan (pool plus `genbank_record`), health endpoints.
+- `main.py`: wiring. Guard, CORS, lifespan (the pool), the health endpoints (`/health/db`'s answer
+  stands 30 s), and no API maps.
 - `config.py`: pydantic-settings. `NCBI_EMAIL` has no default, so importing without it fails by design.
   The caps and limits below have safe defaults, so they hold where Render's environment says nothing.
 - `guard.py`: ASGI middleware before every route: body size, requests a minute per client and
-  service-wide (429 with `Retry-After`), `nosniff`/`DENY`/`no-referrer` headers. Counts are this
-  process's; the suite runs with them off (the root `conftest.py`).
+  service-wide (429 with `Retry-After`), bytes sent a UTC day (`RESPONSE_BYTES_PER_DAY`, 503),
+  `nosniff`/`DENY`/`no-referrer` headers. Counts are this process's; the suite runs with them
+  off (the root `conftest.py`).
 - `budget.py`: what builds on demand may cost on Modal (`DAY_USD`, `MONTH_USD`, `BUILD_USD`) and
   what they have (`spend_ledger`): read by the service and by `modal_app.py`, which reserves each
   paid call's worst case before it claims anything and settles what it cost.
 - `db.py`: optional sync psycopg pool, opened in the lifespan. `None` when `DATABASE_URL` is unset.
-- `entrez_client.py`: the one `Entrez.efetch` call. Fetch-as-text and parse stay apart so the cache can store text.
-- `record_cache.py`: read-through cache of whole GenBank records by accession. Best-effort and self-creating.
-- `genbank_parser.py`: `extract_gene(record, gene)`. Pure, exact `/gene` match, 1-based inclusive.
+- `genbank_parser.py`: `extract_gene(record, gene)`. Pure, exact `/gene` qualifier match, 1-based
+  inclusive. No route reads it since 2026-11-20; the record builder (`pipeline/mock/`) and the
+  resolver do, and its output is the `record` track's format.
 - `catalog.py`: reads `protein` and `protein_alias`. Raises `CatalogUnavailable` (503) and never answers empty.
 - `tracks.py`: `protein_track` rows become `{kind: Track}` with public storage URLs. Any kind with a row is served; `KINDS` is the floor.
 - `lm_runs.py`: `/peptide-lm/runs/{name}`, a recorded training run of the de novo peptide model
@@ -115,20 +122,20 @@ differs from storage. A mismatch means the refactor changed data. Stop; never up
   from the AVI and ClinVar bakes made before it (step `evidence`); and stopping a build for
   the install that asked (`asker`, `0011`).
 - `schemas.py`: pydantic response models that mirror the Dart entities field for field.
-- `router.py`: every non-health endpoint, with the NCBI 404/502 and catalog 503 mappings.
+- `router.py`: every non-health endpoint, with the 404, 429 and catalog 503 mappings.
 
 The app's lab was deleted on 2026-10-09, and with it every baker and endpoint only the lab
 read: `pipeline/audio`, `structure_ar`, `trafficking`, `assemblies`, and `/assembly/{slug}/tracks`.
 Their tables and kinds stay in the schema (`0006`'s `assembly` and `assembly_track`, and
 `protein_track_kind_known`), empty: a migration here only ever adds.
 
-## Migrations: why one table creates itself
+## Migrations
 
-`genbank_record` is created by `record_cache.create_schema()` in the lifespan
-(`create table if not exists`): one table, no history to migrate, a deploy that cannot
-half-apply. A failure is logged and swallowed, and every read then misses.
+`genbank_record`, the retired gene route's cache, was created by the service itself in its
+lifespan, never by a migration; it stays in the database, unused, since a migration here
+only ever adds.
 
-Every other change is a `migrations/000N_*.sql`, applied by hand once and in order:
+Every change is a `migrations/000N_*.sql`, applied by hand once and in order:
 `.venv/bin/python scripts/apply_migration.py migrations/000N_x.sql` (or `psql -f`). Run from a
 web worker on every boot, multi-object DDL could half-apply, run concurrently with itself
 across workers, and fail where the only honest response is to keep serving.
@@ -254,12 +261,11 @@ so the SQL tests run there too, and builds the service's image. With Render's Au
 "After CI Checks Pass" (a dashboard setting), `main` deploys only after it passes, so a red
 `ci` holds production where it is.
 
-- `conftest.py` sets `NCBI_EMAIL` before importing the app.
-- Every Entrez call is patched: `efetch_returning(text)` / `efetch_raising(exc)` replace
-  `entrez_client.Entrez.efetch`, fed `tests/fixtures/ng_007114.gb` (a real NCBI response) or
-  `tests/ncbi_errors.py`. `efetch_raising(AssertionError(...))` proves a path never calls NCBI.
+- `conftest.py` sets `NCBI_EMAIL` before importing the app, and forgets `/health/db`'s standing
+  answer around every test.
+- The parser's tests read `tests/fixtures/ng_007114.gb`, a real NCBI response.
 - The database is a `FakePool` set on `db.pool` that answers by SQL shape (`test_catalog.py`,
-  `test_record_cache.py`, `test_suggest.py`, `test_built.py`). `no_pool` sets it to `None`.
+  `test_suggest.py`, `test_built.py`). `no_pool` sets it to `None`.
 - `client` is `TestClient(app)` outside a `with`, so the lifespan never runs and the real
   `DATABASE_URL` in `.env` is never dialled. Never write `with TestClient(app)`.
 - Tests that need stored tracks skip until `fetch_tracks.py`, run by hand, fills `pipeline/data/`.
@@ -267,22 +273,8 @@ so the SQL tests run there too, and builds the service's image. With Render's Au
   `/proteins/built`'s SQL against a real Postgres, and skips unless `RESOLVER_TEST_DATABASE_URL`
   names one it may create a scratch database on (a local server, never Supabase). `test_modal_app.py` skips without the Modal client.
 
-## NCBI error mapping
-
-| Upstream | We return |
-|---|---|
-| 200 with a GenBank record | 200 (404 if no feature carries that `/gene`) |
-| 200 with error text (`F a i l e d  t o  u n d e r s t a n d`) | 404, because `SeqIO.read` raises `ValueError` |
-| HTTP 400 | 404, because `id` is the only input that can be invalid |
-| Any other HTTP status | 502, with the upstream body in `detail` |
-| DNS failure, refused connection, timeout (`URLError` / `OSError`) | 502 |
+## Errors
 
 503 means our own source is unreadable (catalog, protein index), never
 answered as empty or 404: that would say a protein does not exist when nobody could look.
-
-A valid response is recognised positively: it parses as GenBank, or it is not a record.
-NCBI answers a bad id with plain text and HTTP 200, so an empty-body check would pass that
-text through as a 200. The cache parses before it writes, and evicts a cached row that
-fails to parse. `_upstream_errors` keeps its clauses most-specific-first, because
-`HTTPError` < `URLError` < `OSError`.
 

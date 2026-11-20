@@ -3,8 +3,7 @@
 Reads only. Rows are written by the seeder (`tool/seed_catalog.py`) and, later,
 by the resolver.
 
-Unlike `record_cache`, a failure here has nothing to read through to. The cache
-can lose its database and still answer from NCBI; a catalog that cannot reach
+A failure here has nothing to read through to: a catalog that cannot reach
 its rows has no second source, and inventing one on this side would put a
 second copy of the truth where it can disagree with the first. So these raise
 ``CatalogUnavailable`` and the router reports it as a 503. The client holds its

@@ -16,10 +16,18 @@ import pytest
 from Bio import SeqIO
 from fastapi.testclient import TestClient
 
-from app import entrez_client
+from app import main
 from app.main import app
 
 FIXTURES = pathlib.Path(__file__).parent / "fixtures"
+
+
+@pytest.fixture(autouse=True)
+def fresh_health():
+    """`/health/db` lets one answer stand for a while; no test sees another's."""
+    main.forget_health()
+    yield
+    main.forget_health()
 
 
 @pytest.fixture
@@ -37,33 +45,3 @@ def genbank_text():
 def genbank_record(genbank_text):
     """NG_007114 already parsed, for tests of the pure parser."""
     return SeqIO.read(io.StringIO(genbank_text), "genbank")
-
-
-@pytest.fixture
-def efetch_returning(monkeypatch):
-    """Patch Entrez.efetch to return the given text, recording its arguments."""
-
-    def _install(text):
-        calls = {}
-
-        def fake_efetch(**kwargs):
-            calls.update(kwargs)
-            return io.StringIO(text)
-
-        monkeypatch.setattr(entrez_client.Entrez, "efetch", fake_efetch)
-        return calls
-
-    return _install
-
-
-@pytest.fixture
-def efetch_raising(monkeypatch):
-    """Patch Entrez.efetch to raise the given exception."""
-
-    def _install(exception):
-        def fake_efetch(**kwargs):
-            raise exception
-
-        monkeypatch.setattr(entrez_client.Entrez, "efetch", fake_efetch)
-
-    return _install

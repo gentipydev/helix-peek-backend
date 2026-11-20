@@ -11,7 +11,9 @@ class Settings(BaseSettings):
     ``ncbi_email`` has no default on purpose. NCBI rejects (and eventually
     blocks) traffic without a contact address, so an unset ``NCBI_EMAIL``
     should stop the app from booting rather than produce failures at request
-    time.
+    time. The service itself has not read NCBI since its gene route was
+    retired (2026-11-20); the scripts and the resolver that import these
+    settings still do.
     """
 
     model_config = SettingsConfigDict(
@@ -22,21 +24,15 @@ class Settings(BaseSettings):
 
     ncbi_email: str
 
-    ncbi_timeout_seconds: float = 20.0
-
-    # Unset means "no cache": the service reads through to NCBI for every
-    # request. Supabase's direct host (db.<ref>.supabase.co) resolves to IPv6
-    # only, which Render cannot reach, so this must be the pooler host and
-    # must carry sslmode=require.
+    # Unset, the catalog and every route that reads it is a 503. Supabase's
+    # direct host (db.<ref>.supabase.co) resolves to IPv6 only, which Render
+    # cannot reach, so this must be the pooler host and must carry
+    # sslmode=require.
     database_url: Optional[str] = None
 
     database_pool_max_size: int = 4
 
     database_timeout_seconds: float = 10.0
-
-    # A GenBank record for a given accession is effectively immutable, so this
-    # is about picking up NCBI's own corrections rather than about staleness.
-    cache_ttl_days: int = 30
 
     # The Supabase project, as the REST origin rather than the database host:
     # https://<ref>.supabase.co. Track blobs are served to clients from its
@@ -88,17 +84,6 @@ class Settings(BaseSettings):
     # its place.
     max_built_proteins: int = 200
 
-    # `/gene/{id}/{gene}` reads NCBI for whoever asks, and the app no longer
-    # does (it reads stored records). Bounded so that it can neither fill the
-    # database nor spend NCBI's patience with this service's address: records
-    # past this size are refused unread (a whole chromosome is hundreds of MB;
-    # the largest gene the app ever drew, dystrophin's NG_012232, is 2.9 MB),
-    # this many NCBI reads an hour at most, and the cache stops growing at this
-    # many characters (the eight records it holds are 3.9 MB).
-    max_record_bytes: int = 8_000_000
-    gene_fetches_per_hour: int = 60
-    record_cache_max_chars: int = 64_000_000
-
     # Each client's requests a minute, and the whole service's (`guard.py`).
     # Generous for the app, which polls a build every few seconds and asks for
     # suggestions as its reader types; 0 turns a limit off.
@@ -109,6 +94,16 @@ class Settings(BaseSettings):
     # The largest request body the service reads. Every body it takes is a
     # small JSON object (a gene and an install's id).
     max_body_bytes: int = 16_384
+
+    # Bytes the service may send in one UTC day, every answer's body and
+    # headers counted (`guard.py`); past it, every route but the health checks
+    # is a 503 until midnight UTC. Render's Hobby workspace includes 5 GB of
+    # outbound bandwidth a month and bills each GB past it (or, with no card,
+    # suspends the service for the rest of the month); 150 MB a day is 4.65 GB
+    # in the longest month. The app's answers are kilobytes, and the tracks come
+    # from Supabase's storage, never through here. Counted in this process, so a
+    # restart starts the day's count again. 0 turns it off.
+    response_bytes_per_day: int = 150_000_000
 
 
 settings = Settings()

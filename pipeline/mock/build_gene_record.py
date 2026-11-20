@@ -5,8 +5,8 @@ this writes them under `pipeline/data/`, and `upload_tracks.py --kind record`
 sends them. The file names keep the `mock` they were born with, when the app
 bundled them for a mode with no backend.
 
-Each file is exactly what `GET /gene/{id}/{gene}` would answer, because the
-parsing is the backend's own: this imports `app.genbank_parser.extract_gene`
+Each file is exactly what `GET /gene/{id}/{gene}` answered until that route
+was retired (2026-11-20), because the parsing is the backend's own: this imports `app.genbank_parser.extract_gene`
 from this repo rather than reimplementing it, so a record cannot drift from the
 contract it stands in for.
 

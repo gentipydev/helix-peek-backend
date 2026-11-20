@@ -1,14 +1,13 @@
-"""The connection pool for the cache database.
+"""The connection pool for the database.
 
-Deliberately sync psycopg rather than asyncpg. The read path is a sync ``def``
-(see ``router.read_gene``) because Entrez is blocking urllib, so FastAPI
-already hands it to a threadpool; a sync pool used from that same thread keeps
-one concurrency model in the service instead of two.
+Deliberately sync psycopg rather than asyncpg. Every route is a sync ``def``,
+which FastAPI hands to a threadpool; a sync pool used from that same thread
+keeps one concurrency model in the service instead of two.
 
-The pool is optional on purpose. ``DATABASE_URL`` unset means no cache, and the
-service still answers every request from NCBI -- so a database that is missing,
-asleep or unreachable costs latency, not availability. ``/health/db`` is where
-that condition is made visible.
+The pool is optional on purpose. ``DATABASE_URL`` unset means no pool, and the
+routes that read the database answer 503 rather than fail to boot -- so a
+database that is missing, asleep or unreachable is reported, not fatal.
+``/health/db`` is where that condition is made visible.
 
 ``open=False`` plus an explicit ``open()`` in the lifespan keeps a bad
 connection string from being dialled at import time, where the failure would

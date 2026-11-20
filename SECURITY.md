@@ -5,7 +5,8 @@ repository is public, and so is the service it deploys
 (`https://helix-peak-backend.onrender.com`). Its security is therefore about two things:
 **no secret ever enters the repository**, and **no one can make the project cost money
 or fall over**. This file states every guard and its number. It was written in the
-review of 2026-11-13, before the app's release.
+review of 2026-11-13, before the app's release, and brought up to date in the review of
+2026-11-20, with the app in Google Play's closed testing.
 
 ## Reporting a vulnerability
 
@@ -41,17 +42,25 @@ named in the table.
 | Requests a minute, one client | 240 | `REQUESTS_PER_MINUTE` | 429 + `Retry-After` |
 | POSTs a minute, one client | 30 | `POSTS_PER_MINUTE` | 429 |
 | Requests a minute, whole service | 3,000 | `SERVICE_REQUESTS_PER_MINUTE` | 429 |
+| Bytes sent a UTC day, whole service (bodies and headers, refusals included) | 150 MB | `RESPONSE_BYTES_PER_DAY` | 503 until midnight UTC, health checks still answered |
 | Builds asked a day (asks and resumes) | 20 | `RESOLVES_PER_DAY` | 429 |
 | Builds asked a day, one install | 5 | `RESOLVES_PER_INSTALL_PER_DAY` | 429 |
 | Proteins built on demand held (queued included) | 200 | `MAX_BUILT_PROTEINS` | 429 |
 | Modal budget left for a whole build's worst case | see below | `app/budget.py` | 429 |
-| `/gene/{id}/{gene}`: the id | one gene-sized accession | | 404, NCBI never asked |
-| `/gene`: one record | 8 MB | `MAX_RECORD_BYTES` | 422, the rest unread |
-| `/gene`: NCBI reads | 60 an hour | `GENE_FETCHES_PER_HOUR` | 429 |
-| `/gene`: the record cache | 64 M characters | `RECORD_CACHE_MAX_CHARS` | served, not kept |
+| `/health/db`: database round trips | one each 30 s; the answer stands between | | |
 | Query strings / path names | 200 / 32–100 characters | | 422 |
 
-`/health` and `/health/db` are never counted, because the keep-alive pings them.
+`/health` and `/health/db` count against their client's minute. The service's minute and
+the day's bytes never refuse them (their bytes are counted all the same), so a flood
+elsewhere never fails the keep-alive that pings them.
+
+The gene route, `/gene/{id}/{gene}`, was retired on 2026-11-20. It read any gene-sized
+NCBI record for whoever asked (60 reads an hour, records to 8 MB, a 64 MB cache), and
+answered with the gene's whole genomic sequence: megabytes for dystrophin, the largest
+answer the service could be made to send, and Biopython's parse of an 8 MB record on a
+512 MB instance. The app reads each record as a stored track (`TrackGeneDataSource`), so
+nothing called it. With it went the service's only use of `Bio.Entrez`. There is no `/docs`,
+`/redoc` or `/openapi.json` either: the routes are in this repository.
 
 The build caps are counted in `spend_ledger` (migration 0015), which nothing that deletes
 a build can reach. They used to count `resolve_request` rows, which a discard deletes, so
@@ -67,6 +76,26 @@ whatever a request claims.
 Every answer carries `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY` and
 `Referrer-Policy: no-referrer`. CORS allows any origin, without credentials: there are no
 cookies to send.
+
+## What the service may send: Render's bandwidth
+
+Render bills a Hobby workspace's outbound bandwidth past its 5 GB a month, per GB, with no
+spend cap, where a card is on file; with none, it suspends every free service for the rest
+of the month (render.com/docs/outbound-bandwidth, read 2026-11-20). No minute limit bounds
+that: 3,000 answers a minute of `/catalog` (48 KB unzipped) is 5 GB in about 35 minutes,
+from as many addresses as a script cares to use. So `guard.py` counts every byte the
+service sends in the UTC day, each answer's body and headers and the 250 bytes or so the
+server and the edge add to it (`EDGE_BYTES`, measured), and past
+`RESPONSE_BYTES_PER_DAY` (150 MB, 4.65 GB in the longest month) answers every route but
+the health checks with a 503 until midnight UTC, logging it once. The worst an attacker
+can then do is take the service down until midnight, never run up a bill. The count is
+the process's, so a deploy or a restart starts the day again; Render restarts the service
+only on a deploy or a crash. The app's own answers are kilobytes, and its tracks never
+pass through here (they come from Supabase's storage), so a day of real use is a small
+part of the budget.
+
+To see it: the service logs `past RESPONSE_BYTES_PER_DAY` the first time a day trips it,
+and Render's dashboard (Billing → bandwidth) has the month's bytes.
 
 ## What builds may cost: Modal (`pipeline/resolver/modal_app.py`)
 
@@ -123,6 +152,7 @@ each cap is. `modal billing summary` is Modal's own bill.
 |---|---|
 | Stop every build at once | `modal app stop helix-peak-resolver` (deploy again to restart) |
 | Stop new asks, keep reads | set `RESOLVES_PER_DAY=0` on Render |
+| Send less | lower `RESPONSE_BYTES_PER_DAY` on Render (the service restarts, and its day with it) |
 | Tighten the money | lower `DAY_USD` / `MONTH_USD` in `app/budget.py`, push, and once `ci` passes, `scripts/deploy_modal.py` (`--force` if it cannot wait) |
 | See what was spent | `scripts/spend.py`; `modal billing report --for today --show-resources` |
 
@@ -152,8 +182,22 @@ Rotating a credential, if one ever leaks:
   them changes the bakes, which must then be re-proved byte for byte (`CLAUDE.md`). Do
   that as its own piece of work.
 - **Biopython 1.85**'s advisory (CVE-2025-68463) is an XML external entity in
-  `Bio.Entrez`'s XML parser. The service fetches GenBank as text and never parses
+  `Bio.Entrez`'s XML parser. The service has not called Entrez at all since the gene
+  route was retired (2026-11-20); the bakers fetch GenBank as text and never parse
   Entrez XML. 1.85 is kept for the same byte-for-byte reason.
+- **Supabase storage's egress** is not limited by anything here: the app fetches the
+  public track URLs directly, through Supabase's CDN. The Free plan has 5 GB of cached
+  and 5 GB of uncached egress a month, and the largest object is 9.6 MB (dystrophin's
+  ClinVar track), so a script could use the month's up in some hundreds of downloads.
+  Past it, Supabase restricts the project until the quota refills; on the Free plan it
+  never bills. The app caches every track by sha256, so its own readers download each
+  once. If this ever matters, the buckets can move behind a host with no egress fees.
+- **The per-client minute** is keyed on `CF-Connecting-IP`, which Render's Cloudflare
+  edge sets. Whether it also overwrites one a client sends is checked by sending a run of
+  requests that each claim another address (2026-11-20; see the review's notes). Either
+  way the service's minute, the day's bytes and every cap in the database hold.
+- **One person can take a day's 20 builds**, with a new install id for each 5. Testers
+  then wait a day to build; nothing costs more.
 - **`/health/db`** names the Postgres version. It is managed Postgres, and the keep-alive
   reads that endpoint.
 - **Commit metadata** carries the author's addresses, as all git history does.

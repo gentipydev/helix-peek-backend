@@ -112,8 +112,8 @@ def for_slug(slug: str) -> Dict[str, dict]:
 
     A database that is missing or broken reports every track absent rather than
     raising. The walk then draws a protein with no tracks, which is a state it
-    already knows how to draw -- the same trade `record_cache` makes, where a
-    dead database costs what it can show and never availability.
+    already knows how to draw: a dead database costs what it can show and never
+    availability.
     """
     tracks = {kind: _absent() for kind in KINDS}
     if db.pool is None:
